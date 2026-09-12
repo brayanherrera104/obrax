@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block content %}
+{% if demo %}<div class="demo">🚀 DEMO: datos ficticios. <a href="/register">Crea tu cuenta para guardar tus propios datos.</a></div>{% endif %}
+<div class="head"><div><span class="pill">Centro de control</span><h1>Hola, {{company.name}}</h1><p>De la cotización al control de obra, todo en un solo lugar.</p></div><a class="btn primary" href="/apu/new">+ Crear APU</a></div>
+<div class="stats five"><div><span>Clientes</span><b>{{clients_count}}</b></div><div><span>Obras</span><b>{{projects|length}}</b></div><div><span>APUs</span><b>{{apus_count}}</b></div><div><span>Presupuestos</span><b>{{budgets_count}}</b></div><div><span>Cotizaciones</span><b>{{quotes_count}}</b></div></div>
+<div class="kpi"><span>Valor cotizado acumulado</span><b>${{"{:,.0f}".format(quoted_total)}}</b></div>
+<section class="panel"><div class="sectionhead"><h2>Obras recientes</h2>{% if not demo %}<a href="/projects">Ver todas</a>{% endif %}</div><table><tr><th>Obra</th><th>Cliente</th><th>Valor</th><th>Estado</th></tr>{% for p in projects %}<tr><td>{{p.name}}</td><td>{{p.client if demo else p.client_name}}</td><td>${{"{:,.0f}".format(p.value or 0)}}</td><td><span class="status">{{p.status}}</span></td></tr>{% endfor %}</table></section>
+{% endblock %}
