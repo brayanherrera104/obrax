@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}{% if demo %}<div class="demo">DEMO · Explora APUs de ejemplo. <a href="/register">Crea una cuenta para guardar los tuyos.</a></div>{% endif %}
+<div class="head"><div><span class="pill">Costos unitarios</span><h1>Biblioteca de APUs</h1><p>Construye precios con materiales, mano de obra, equipos, desperdicio y AIU.</p></div>{% if demo %}<a class="btn primary" href="/register">Crear cuenta</a>{% else %}<a class="btn primary" href="/apu/new">+ Nuevo APU</a>{% endif %}</div>
+<div class="cards apucards">{% for a in apus %}<div class="apu"><span class="unit">{{a.unit}}</span><h3>{{a.name}}</h3><p>Costo directo</p><strong>${{"{:,.0f}".format(a.direct)}}</strong><hr><p>Precio de venta</p><b>${{"{:,.0f}".format(a.price)}} / {{a.unit}}</b></div>{% else %}<div class="empty">Aún no tienes APUs.</div>{% endfor %}</div>
+{% endblock %}

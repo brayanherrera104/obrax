@@ -1,0 +1,4 @@
+{% extends "base.html" %}{% block content %}
+<div class="head"><div><span class="pill">Ventas</span><h1>Cotizaciones</h1><p>Convierte presupuestos en propuestas comerciales trazables.</p></div></div>
+<section class="panel"><table><tr><th>Número</th><th>Presupuesto</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th></tr>{% for q in quotations %}<tr><td><b>{{q.quote_number}}</b></td><td>{{q.budget_name}}</td><td>{{q.created_at}}</td><td>${{"{:,.0f}".format(q.total)}}</td><td><span class="status">{{q.status}}</span></td><td><a href="/quotation/{{q.id}}">Abrir →</a></td></tr>{% else %}<tr><td colspan="6">Genera una cotización desde un presupuesto.</td></tr>{% endfor %}</table></section>
+{% endblock %}

@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<div class="head"><div><span class="pill">CRM básico</span><h1>Clientes</h1><p>Centraliza los datos de quienes contratan tus obras.</p></div></div>
+<form class="formcard grid6" method="post"><input name="name" placeholder="Empresa / cliente" required><input name="nit" placeholder="NIT / CC"><input name="contact" placeholder="Contacto"><input name="phone" placeholder="Teléfono"><input name="email" type="email" placeholder="Correo"><button class="btn primary">+ Crear cliente</button></form>
+<section class="panel"><table><tr><th>Cliente</th><th>NIT</th><th>Contacto</th><th>Teléfono</th><th>Correo</th></tr>{% for c in clients %}<tr><td><b>{{c.name}}</b></td><td>{{c.nit}}</td><td>{{c.contact}}</td><td>{{c.phone}}</td><td>{{c.email}}</td></tr>{% else %}<tr><td colspan="5">Aún no tienes clientes registrados.</td></tr>{% endfor %}</table></section>
+{% endblock %}

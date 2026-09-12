@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<div class="head"><div><span class="pill">Ejecución</span><h1>Obras</h1><p>Organiza contratos, clientes y estado de ejecución.</p></div></div>
+<form class="formcard projectform" method="post"><input name="name" placeholder="Nombre de la obra" required><select name="client_id"><option value="">Cliente</option>{% for c in clients %}<option value="{{c.id}}">{{c.name}}</option>{% endfor %}</select><input name="value" type="number" placeholder="Valor contrato"><select name="status"><option>En preparación</option><option>Cotización</option><option>En ejecución</option><option>Finalizado</option></select><button class="btn primary">+ Crear obra</button></form>
+<section class="panel"><table><tr><th>Obra</th><th>Cliente</th><th>Valor</th><th>Estado</th></tr>{% for p in projects %}<tr><td><b>{{p.name}}</b></td><td>{{p.client_name}}</td><td>${{"{:,.0f}".format(p.value or 0)}}</td><td><span class="status">{{p.status}}</span></td></tr>{% else %}<tr><td colspan="4">Crea tu primera obra.</td></tr>{% endfor %}</table></section>
+{% endblock %}

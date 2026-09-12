@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block content %}
+<div class="head"><div><span class="pill">{{q.quote_number}}</span><h1>Cotización</h1><p>{{q.project_name or q.budget_name}}</p></div><button class="btn" onclick="window.print()">Imprimir / PDF</button></div>
+<div class="quote">
+<div class="quoteheader"><div><h2>{{company.name}}</h2><p>NIT {{company.nit or "-"}}<br>{{company.email}} · {{company.phone}}</p></div><div><b>{{q.quote_number}}</b><p>Fecha: {{q.created_at}}<br>Validez: {{q.validity_days}} días</p></div></div>
+<div class="clientbox"><b>Cliente: {{q.client_name or "Sin cliente asignado"}}</b><br>{{q.client_nit or ""}} {{q.client_contact or ""}} {{q.client_phone or ""}}</div>
+<table><tr><th>Descripción</th><th>Und</th><th>Cant.</th><th>Precio</th><th>Total</th></tr>{% for i in items %}<tr><td>{{i.description}}</td><td>{{i.unit}}</td><td>{{"{:,.2f}".format(i.quantity)}}</td><td>${{"{:,.0f}".format(i.unit_price)}}</td><td>${{"{:,.0f}".format(i.quantity*i.unit_price)}}</td></tr>{% endfor %}</table>
+<div class="totalbox"><span>TOTAL COTIZACIÓN</span><b>${{"{:,.0f}".format(total)}}</b></div>
+<form method="post" class="quoteform"><label>Estado</label><select name="status">{% for s in ["Borrador","Enviada","En negociación","Aprobada","Rechazada"] %}<option {% if s==q.status %}selected{% endif %}>{{s}}</option>{% endfor %}</select><label>Condiciones de pago</label><textarea name="terms">{{q.terms or ""}}</textarea><label>Observaciones</label><textarea name="observations">{{q.observations or ""}}</textarea><button class="btn primary">Guardar cambios</button></form>
+</div>
+{% endblock %}
