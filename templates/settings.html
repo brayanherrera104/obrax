@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">CONFIGURACIÓN</span><h1>Mi empresa</h1><p>Estos datos aparecerán en tus documentos comerciales.</p></div></div>
+<div class="panel form-panel">
+<form method="post" enctype="multipart/form-data">
+  <div class="settings-grid">
+    <div class="logo-box">
+      {% if company.logo_data %}<img src="{{ company.logo_data }}" class="company-logo-preview" alt="Logo">{% else %}<div class="logo-placeholder">OBRAX</div>{% endif %}
+      <label>Logo de la empresa</label><input type="file" name="logo" accept="image/png,image/jpeg,image/webp">
+      <small>PNG, JPG o WEBP. Máximo 2 MB.</small>
+    </div>
+    <div>
+      <label>Razón social</label><input name="name" value="{{ company.name }}" required>
+      <label>NIT</label><input name="nit" value="{{ company.nit or '' }}">
+      <label>Nombre del administrador</label><input name="admin_name" value="{{ company.admin_name }}" required>
+      <label>Teléfono</label><input name="phone" value="{{ company.phone or '' }}">
+      <label>Correo</label><input value="{{ company.email }}" disabled>
+      <button class="btn" type="submit">Guardar cambios</button>
+    </div>
+  </div>
+</form>
+</div>
+{% endblock %}
