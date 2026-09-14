@@ -1,0 +1,13 @@
+{% extends 'base.html' %}{% block content %}
+<div class="page-head"><span class="eyebrow">PLAN Y FACTURACIÓN</span><h1>Elige el plan para tu empresa</h1><p>Empieza probando OBRAX y escala cuando tu operación lo necesite.</p></div>
+<div class="plan-grid">
+{% for key,p in plans.items() %}
+<div class="plan-card {% if current_plan==key %}plan-current{% endif %}">
+  {% if current_plan==key %}<span class="plan-badge">Plan actual</span>{% endif %}
+  <h2>{{ key }}</h2><div class="plan-price">{{ p.price }}</div><p>{{ p.description }}</p>
+  <ul>{% for f in p.features %}<li>✓ {{ f }}</li>{% endfor %}</ul>
+  {% if current_plan==key %}<button class="btn secondary" disabled>Plan activo</button>{% elif key=='Empresa' %}<a class="btn primary" href="mailto:ventas@obrax.co?subject=Plan Empresa OBRAX">Contactar</a>{% else %}<button class="btn primary" disabled>Próximamente</button>{% endif %}
+</div>{% endfor %}
+</div>
+<div class="panel billing-note"><h2>Estado de la suscripción</h2><p><b>{{ current_plan }}</b> · {{ subscription_status }}{% if expires_at %} · Vigente hasta {{ expires_at }}{% endif %}</p><p class="muted">El cobro en línea se habilitará en la siguiente fase. Por ahora el Superadministrador puede asignar planes manualmente.</p></div>
+{% endblock %}
