@@ -1,1 +1,1 @@
-web: gunicorn superadmin:app
+web: gunicorn wsgi:app
