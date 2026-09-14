@@ -1,8 +1,8 @@
 import os,hmac
 from functools import wraps
-from datetime import datetime
+from datetime import datetime,timedelta
 from flask import render_template,request,redirect,url_for,session,flash
-from app import app,db
+from app import app,db,PG
 
 ADMIN_EMAIL=os.environ.get('OBRAX_SUPERADMIN_EMAIL','').strip().lower();ADMIN_PASSWORD=os.environ.get('OBRAX_SUPERADMIN_PASSWORD','')
 PLANS={
@@ -12,33 +12,52 @@ PLANS={
  'Empresa':{'price':'$199.900 COP / mes','description':'Para equipos con mayor operación.','features':['Todo Pro','Múltiples usuarios (próximamente)','Roles y permisos (próximamente)','Soporte empresarial']}}
 
 def ensure_admin_tables():
- c=db();c.execute('''CREATE TABLE IF NOT EXISTS company_admin_meta(company_id INTEGER PRIMARY KEY,plan TEXT DEFAULT 'Prueba',is_active INTEGER DEFAULT 1,created_at TEXT,last_seen_at TEXT,last_admin_action TEXT)''')
- # migrations for subscription lifecycle
- for col,typ in [('subscription_status','TEXT'),('expires_at','TEXT')]:
-  try:c.execute(f'ALTER TABLE company_admin_meta ADD COLUMN {col} {typ}')
-  except Exception:c.rollback()
- c.commit();c.close()
+ c=db();c.execute('''CREATE TABLE IF NOT EXISTS company_admin_meta(company_id INTEGER PRIMARY KEY,plan TEXT DEFAULT 'Prueba',is_active INTEGER DEFAULT 1,created_at TEXT,last_seen_at TEXT,last_admin_action TEXT)''');c.commit()
+ try:
+  if PG:
+   cols={r['column_name'] for r in c.execute("SELECT column_name FROM information_schema.columns WHERE table_name='company_admin_meta'").fetchall()}
+  else:
+   cols={r['name'] for r in c.execute('PRAGMA table_info(company_admin_meta)').fetchall()}
+  if 'subscription_status' not in cols:c.execute('ALTER TABLE company_admin_meta ADD COLUMN subscription_status TEXT');c.commit()
+  if 'expires_at' not in cols:c.execute('ALTER TABLE company_admin_meta ADD COLUMN expires_at TEXT');c.commit()
+ except Exception:
+  c.rollback()
+ c.close()
+
 def ensure_company_meta(company_id):
  c=db();m=c.execute('SELECT company_id FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone()
  if not m:
-  now=datetime.utcnow().isoformat(timespec='seconds');c.execute('INSERT INTO company_admin_meta(company_id,plan,is_active,created_at,last_seen_at,subscription_status) VALUES(?,?,?,?,?,?)',(company_id,'Prueba',1,now,now,'Prueba'));c.commit()
+  now=datetime.utcnow();exp=(now+timedelta(days=14)).isoformat(timespec='seconds');c.execute('INSERT INTO company_admin_meta(company_id,plan,is_active,created_at,last_seen_at,subscription_status,expires_at) VALUES(?,?,?,?,?,?,?)',(company_id,'Prueba',1,now.isoformat(timespec='seconds'),now.isoformat(timespec='seconds'),'Prueba',exp));c.commit()
  c.close()
+
 def superadmin_required(f):
  @wraps(f)
  def w(*a,**k):return f(*a,**k) if session.get('superadmin') else redirect(url_for('superadmin_login'))
  return w
+
+def refresh_subscription(company_id):
+ c=db();m=c.execute('SELECT subscription_status,expires_at FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone()
+ if m and m['expires_at']:
+  try:
+   if datetime.fromisoformat(m['expires_at']) < datetime.utcnow() and m['subscription_status']!='Vencida':
+    c.execute('UPDATE company_admin_meta SET subscription_status=? WHERE company_id=?',('Vencida',company_id));c.commit()
+  except Exception:pass
+ c.close()
+
 @app.before_request
 def superadmin_company_guard():
  ensure_admin_tables();cid=session.get('company_id')
  if not cid:return None
- ensure_company_meta(cid);c=db();m=c.execute('SELECT is_active FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
+ ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
+
 @app.route('/billing')
 def billing():
  cid=session.get('company_id')
  if not cid:return redirect(url_for('login'))
- ensure_company_meta(cid);c=db();m=c.execute('SELECT * FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone();c.close();return render_template('billing.html',plans=PLANS,current_plan=m['plan'] or 'Prueba',subscription_status=m['subscription_status'] or 'Prueba',expires_at=m['expires_at'])
+ ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT * FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone();c.close();return render_template('billing.html',plans=PLANS,current_plan=m['plan'] or 'Prueba',subscription_status=m['subscription_status'] or 'Prueba',expires_at=m['expires_at'])
+
 @app.route('/superadmin/login',methods=['GET','POST'])
 def superadmin_login():
  if request.method=='POST':
@@ -47,8 +66,10 @@ def superadmin_login():
   elif hmac.compare_digest(email,ADMIN_EMAIL) and hmac.compare_digest(password,ADMIN_PASSWORD):session.clear();session['superadmin']=True;return redirect(url_for('superadmin_dashboard'))
   else:flash('Credenciales incorrectas.')
  return render_template('superadmin_login.html')
+
 @app.route('/superadmin/logout')
 def superadmin_logout():session.clear();return redirect(url_for('superadmin_login'))
+
 @app.route('/superadmin')
 @superadmin_required
 def superadmin_dashboard():
@@ -56,8 +77,12 @@ def superadmin_dashboard():
  if q:rows=c.execute(base+" WHERE LOWER(co.name) LIKE ? OR LOWER(co.email) LIKE ? OR LOWER(COALESCE(co.nit,'')) LIKE ? ORDER BY co.id DESC",('%'+q.lower()+'%','%'+q.lower()+'%','%'+q.lower()+'%')).fetchall()
  else:rows=c.execute(base+' ORDER BY co.id DESC').fetchall()
  total=c.execute('SELECT COUNT(*) n FROM companies').fetchone()['n'];active=c.execute('SELECT COUNT(*) n FROM company_admin_meta WHERE is_active=1').fetchone()['n'];apus=c.execute('SELECT COUNT(*) n FROM apus').fetchone()['n'];quotes=c.execute('SELECT COUNT(*) n FROM quotations').fetchone()['n'];c.close();return render_template('superadmin_dashboard.html',companies=rows,total=total,active=active,apus=apus,quotes=quotes,q=q)
+
 @app.route('/superadmin/company/<int:company_id>/update',methods=['POST'])
 @superadmin_required
 def superadmin_company_update(company_id):
- ensure_company_meta(company_id);plan=request.form.get('plan','Prueba');plan=plan if plan in PLANS else 'Prueba';active=1 if request.form.get('is_active')=='1' else 0;c=db();c.execute('UPDATE company_admin_meta SET plan=?,is_active=?,subscription_status=?,last_admin_action=? WHERE company_id=?',(plan,active,'Activa' if plan!='Prueba' else 'Prueba',datetime.utcnow().isoformat(timespec='seconds'),company_id));c.commit();c.close();flash('Empresa actualizada.');return redirect(url_for('superadmin_dashboard'))
+ ensure_company_meta(company_id);plan=request.form.get('plan','Prueba');plan=plan if plan in PLANS else 'Prueba';active=1 if request.form.get('is_active')=='1' else 0;c=db();old=c.execute('SELECT plan,expires_at FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();now=datetime.utcnow();exp=old['expires_at'] if old else None
+ if not old or old['plan']!=plan or not exp:exp=(now+timedelta(days=14 if plan=='Prueba' else 30)).isoformat(timespec='seconds')
+ status='Prueba' if plan=='Prueba' else 'Activa';c.execute('UPDATE company_admin_meta SET plan=?,is_active=?,subscription_status=?,expires_at=?,last_admin_action=? WHERE company_id=?',(plan,active,status,exp,now.isoformat(timespec='seconds'),company_id));c.commit();c.close();flash('Empresa actualizada.');return redirect(url_for('superadmin_dashboard'))
+
 ensure_admin_tables()
