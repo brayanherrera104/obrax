@@ -21,7 +21,13 @@ def activity_data(c,project_id,company_id):
  for x in items:
   r=c.execute('SELECT progress FROM project_activity_progress WHERE project_id=? AND company_id=? AND budget_item_id=?',(project_id,company_id,x['id'])).fetchone();pct=float(r['progress'] or 0) if r else 0;value=x['total'] or 0;weighted+=value*pct/100
   cr=c.execute('SELECT COALESCE(SUM(amount),0) real_cost FROM project_costs WHERE project_id=? AND company_id=? AND budget_item_id=?',(project_id,company_id,x['id'])).fetchone();real=float(cr['real_cost'] or 0);target=value*pct/100;dev=real-target
-  rows.append({'id':x['id'],'description':x['description'],'unit':x['unit'],'quantity':x['quantity'],'total':value,'progress':pct,'weight':(value/total*100 if total else 0),'real_cost':real,'target_cost':target,'deviation':dev})
+  consumption=(real/target*100) if target>0 else (100 if real>0 else 0)
+  if pct<=0 and real>0:traffic='red';status='Costo sin avance';alert='Hay costos registrados pero la actividad no tiene avance reportado.'
+  elif target<=0:traffic='gray';status='Sin datos';alert='Registra avance para evaluar el desempeño.'
+  elif consumption>105:traffic='red';status='Sobrecosto';alert='El costo real supera el costo esperado para el avance actual.'
+  elif consumption>=90:traffic='yellow';status='Atención';alert='El costo está cerca del límite esperado para este avance.'
+  else:traffic='green';status='Controlado';alert='El costo registrado está por debajo del esperado para este avance.'
+  rows.append({'id':x['id'],'description':x['description'],'unit':x['unit'],'quantity':x['quantity'],'total':value,'progress':pct,'weight':(value/total*100 if total else 0),'real_cost':real,'target_cost':target,'deviation':dev,'consumption':consumption,'traffic':traffic,'cost_status':status,'alert':alert})
  return rows,(weighted/total*100 if total else 0)
 
 @app.route('/project/<int:project_id>/progress',methods=['POST'])
