@@ -27,6 +27,23 @@ def activity_data(c,project_id,company_id):
   rows.append({'id':x['id'],'description':x['description'],'unit':x['unit'],'quantity':x['quantity'],'total':value,'progress':pct,'weight':(value/total*100 if total else 0),'real_cost':real,'target_cost':target,'deviation':dev,'consumption':consumption,'traffic':traffic,'cost_status':status,'alert':alert})
  return rows,(weighted/total*100 if total else 0)
 
+def project_financials(c,project_id,company_id,contract,budget,actual,progress):
+ # Cartera neta: el dinero que realmente se espera recibir después de retenciones.
+ try:receivables=c.execute('SELECT * FROM project_receivables WHERE project_id=? AND company_id=?',(project_id,company_id)).fetchall()
+ except Exception:receivables=[]
+ billed=retentions=net_expected=collected=receivable_pending=0
+ for x in receivables:
+  gross=float(x['amount'] or 0);rf=float(x['retefuente_pct'] or 0);ri=float(x['reteica_pct'] or 0);rv=float(x['reteiva_pct'] or 0);other=float(x['other_withholding'] or 0);ret=max(0,gross*(rf+ri+rv)/100+other);net=max(0,gross-ret);paid=float(x['paid_amount'] or 0)
+  billed+=gross;retentions+=ret;net_expected+=net;collected+=paid;receivable_pending+=max(0,net-paid)
+ payable=sum(float(x['amount'] or 0) for x in c.execute("SELECT amount FROM project_costs WHERE project_id=? AND company_id=? AND payment_status='Pendiente'",(project_id,company_id)).fetchall())
+ target=(budget*progress/100) if budget>0 else None;deviation=(actual-target) if target is not None else None;projected_cost=(actual/progress*100) if progress>0 else (budget if budget>0 else None);projected_profit=(contract-projected_cost) if projected_cost is not None else None;projected_margin=(projected_profit/contract*100) if projected_profit is not None and contract else None
+ if budget<=0:level='info';title='Falta presupuesto definitivo';message='Vincula un presupuesto a la obra para medir desviaciones y proyectar la utilidad.'
+ elif progress<=0:level='info';title='Falta avance de obra';message='Registra el avance físico para comparar el costo real contra el costo esperado.'
+ elif deviation is not None and deviation>target*.05:level='danger';title='Atención: costos por encima de lo esperado';message=f'La obra lleva ${abs(deviation):,.0f} más de costo que lo esperado para su avance actual.'
+ elif deviation is not None and deviation<(-target*.05):level='success';title='Costos por debajo de lo esperado';message=f'La obra lleva ${abs(deviation):,.0f} menos de costo que lo esperado para su avance actual. Verifica que todos los costos estén registrados.'
+ else:level='warning';title='Costos dentro del rango esperado';message='El costo real está cerca de lo previsto para el avance actual.'
+ return {'billed':billed,'retentions':retentions,'net_expected':net_expected,'collected':collected,'receivable_pending':receivable_pending,'payable':payable,'projected_cost':projected_cost,'projected_profit':projected_profit,'projected_margin':projected_margin,'alert_level':level,'alert_title':title,'alert_message':message}
+
 @app.route('/project/<int:project_id>/progress',methods=['POST'])
 @login_required
 def project_progress(project_id):
@@ -68,7 +85,7 @@ def project_control(project_id):
  elif progress_deviation > target_cost*0.05:health='Sobre presupuesto'
  elif progress_deviation < -target_cost*0.05:health='Por debajo del presupuesto'
  else:health='Dentro del presupuesto'
- contract=p['value'] or 0;expected_profit=(contract-budget) if has_budget else None;real_profit=contract-actual;real_margin=(real_profit/contract*100) if contract else None;c.close();return render_template('project_control.html',project=p,costs=costs,budget=budget,has_budget=has_budget,actual=actual,paid=paid,pending=pending,expected_profit=expected_profit,real_profit=real_profit,real_margin=real_margin,progress=progress,manual_progress=manual,progress_source=progress_source,target_cost=target_cost,progress_deviation=progress_deviation,health=health,activities=activities,today=date.today().isoformat())
+ contract=p['value'] or 0;expected_profit=(contract-budget) if has_budget else None;real_profit=contract-actual;real_margin=(real_profit/contract*100) if contract else None;financial=project_financials(c,project_id,cid,contract,budget,actual,progress);c.close();return render_template('project_control.html',project=p,costs=costs,budget=budget,has_budget=has_budget,actual=actual,paid=paid,pending=pending,expected_profit=expected_profit,real_profit=real_profit,real_margin=real_margin,progress=progress,manual_progress=manual,progress_source=progress_source,target_cost=target_cost,progress_deviation=progress_deviation,health=health,activities=activities,financial=financial,today=date.today().isoformat())
 
 @app.route('/project/<int:project_id>/cost/<int:cost_id>/edit',methods=['POST'])
 @login_required
