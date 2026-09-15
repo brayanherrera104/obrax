@@ -4,6 +4,7 @@ from flask import render_template, session, redirect
 from app import app, db
 import control_obra
 import budget_coverage
+import receivables
 
 
 def _count(c, table, company_id):
@@ -25,6 +26,11 @@ def _project_finance(c, project, company_id):
     projected_profit = contract - budget if budget > 0 and budget_complete else None
     projected_margin = (projected_profit / contract * 100) if projected_profit is not None and contract > 0 else None
     balance_vs_costs = contract - actual
+    rr = c.execute('SELECT amount,paid_amount,due_date FROM project_receivables WHERE project_id=? AND company_id=?', (pid, company_id)).fetchall()
+    billed = sum(float(x['amount'] or 0) for x in rr)
+    collected = sum(float(x['paid_amount'] or 0) for x in rr)
+    receivable = sum(max(0, float(x['amount'] or 0)-float(x['paid_amount'] or 0)) for x in rr)
+    collection_pct = (collected / billed * 100) if billed > 0 else 0
     if budget <= 0:
         status = 'Sin presupuesto'
     elif not budget_complete:
@@ -42,7 +48,8 @@ def _project_finance(c, project, company_id):
         'contract': contract, 'budget': budget, 'budget_complete': budget_complete, 'budget_count': budget_count,
         'actual': actual, 'progress': progress, 'expected_cost': expected_cost, 'deviation': deviation,
         'projected_profit': projected_profit, 'projected_margin': projected_margin,
-        'balance_vs_costs': balance_vs_costs, 'finance_status': status, 'status': project['status']
+        'balance_vs_costs': balance_vs_costs, 'finance_status': status, 'status': project['status'],
+        'billed': billed, 'collected': collected, 'receivable': receivable, 'collection_pct': collection_pct
     }
 
 
@@ -50,11 +57,11 @@ def dashboard_live():
     if not session.get('company_id') and not session.get('demo'):
         return redirect('/login')
     if session.get('demo'):
-        demo_project = {'id': 1, 'name': 'Cerramiento estación TM', 'client_name': 'Cliente Demo', 'contract': 185000000, 'budget': 145000000, 'budget_complete': True, 'budget_count': 1, 'actual': 68000000, 'progress': 50, 'expected_cost': 72500000, 'deviation': -4500000, 'projected_profit': 40000000, 'projected_margin': 21.6, 'balance_vs_costs': 117000000, 'finance_status': 'Controlado', 'status': 'En ejecución'}
-        return render_template('dashboard.html', company={'name':'Constructora Demo S.A.S.'}, projects=[demo_project], apus_count=12, clients_count=8, budgets_count=5, quotes_count=3, quoted_total=505000000, projects_count=1, active_projects=1, contracted_total=185000000, committed_total=68000000, pending_total=18000000, overdue_total=6000000, balance_vs_costs=117000000, projected_profit_total=40000000, complete_budget_total=145000000, partial_budget_total=0, budget_total=145000000, incomplete_projects=0, demo=True)
+        demo_project = {'id': 1, 'name': 'Cerramiento estación TM', 'client_name': 'Cliente Demo', 'contract': 185000000, 'budget': 145000000, 'budget_complete': True, 'budget_count': 1, 'actual': 68000000, 'progress': 50, 'expected_cost': 72500000, 'deviation': -4500000, 'projected_profit': 40000000, 'projected_margin': 21.6, 'balance_vs_costs': 117000000, 'finance_status': 'Controlado', 'status': 'En ejecución', 'billed': 90000000, 'collected': 60000000, 'receivable': 30000000, 'collection_pct': 66.7}
+        return render_template('dashboard.html', company={'name':'Constructora Demo S.A.S.'}, projects=[demo_project], apus_count=12, clients_count=8, budgets_count=5, quotes_count=3, quoted_total=505000000, projects_count=1, active_projects=1, contracted_total=185000000, committed_total=68000000, pending_total=18000000, overdue_total=6000000, balance_vs_costs=117000000, projected_profit_total=40000000, complete_budget_total=145000000, partial_budget_total=0, budget_total=145000000, incomplete_projects=0, billed_total=90000000, collected_total=60000000, receivable_total=30000000, receivable_overdue_total=0, demo=True)
 
     cid = session['company_id']
-    control_obra.ensure_cost_table(); budget_coverage.ensure_budget_coverage_table()
+    control_obra.ensure_cost_table(); budget_coverage.ensure_budget_coverage_table(); receivables.ensure_receivables_table()
     c = db()
     co = c.execute('SELECT * FROM companies WHERE id=?', (cid,)).fetchone()
     raw_projects = c.execute("""SELECT p.*,COALESCE(cl.name,p.client,'') client_name
@@ -76,11 +83,16 @@ def dashboard_live():
     today = date.today().isoformat()
     overdue_total = sum(float(x['amount'] or 0) for x in costs if x['payment_status']=='Pendiente' and x['due_date'] and x['due_date'] < today)
     balance_vs_costs = contracted_total - committed_total
+    receivable_rows = c.execute('SELECT amount,paid_amount,due_date FROM project_receivables WHERE company_id=?', (cid,)).fetchall()
+    billed_total = sum(float(x['amount'] or 0) for x in receivable_rows)
+    collected_total = sum(float(x['paid_amount'] or 0) for x in receivable_rows)
+    receivable_total = sum(max(0,float(x['amount'] or 0)-float(x['paid_amount'] or 0)) for x in receivable_rows)
+    receivable_overdue_total = sum(max(0,float(x['amount'] or 0)-float(x['paid_amount'] or 0)) for x in receivable_rows if float(x['amount'] or 0)>float(x['paid_amount'] or 0) and x['due_date'] and x['due_date'] < today)
     quote_rows = c.execute('SELECT budget_id FROM quotations WHERE company_id=?', (cid,)).fetchall(); quoted_total = 0
     for q in quote_rows:
         rows = c.execute('SELECT quantity,unit_price FROM budget_items WHERE budget_id=?', (q['budget_id'],)).fetchall()
         quoted_total += sum(float(x['quantity'] or 0)*float(x['unit_price'] or 0) for x in rows)
     c.close()
-    return render_template('dashboard.html', company=co, projects=finance_projects[:6], apus_count=apus_count, clients_count=clients_count, budgets_count=budgets_count, quotes_count=quotes_count, quoted_total=quoted_total, projects_count=projects_count, active_projects=active_projects, contracted_total=contracted_total, budget_total=budget_total, complete_budget_total=complete_budget_total, partial_budget_total=partial_budget_total, incomplete_projects=incomplete_projects, projected_profit_total=projected_profit_total, committed_total=committed_total, pending_total=pending_total, overdue_total=overdue_total, balance_vs_costs=balance_vs_costs, demo=False)
+    return render_template('dashboard.html', company=co, projects=finance_projects[:6], apus_count=apus_count, clients_count=clients_count, budgets_count=budgets_count, quotes_count=quotes_count, quoted_total=quoted_total, projects_count=projects_count, active_projects=active_projects, contracted_total=contracted_total, budget_total=budget_total, complete_budget_total=complete_budget_total, partial_budget_total=partial_budget_total, incomplete_projects=incomplete_projects, projected_profit_total=projected_profit_total, committed_total=committed_total, pending_total=pending_total, overdue_total=overdue_total, balance_vs_costs=balance_vs_costs, billed_total=billed_total, collected_total=collected_total, receivable_total=receivable_total, receivable_overdue_total=receivable_overdue_total, demo=False)
 
 app.view_functions['dashboard'] = dashboard_live
