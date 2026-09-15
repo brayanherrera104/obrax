@@ -5,3 +5,4 @@ import control_obra  # noqa: F401,E402
 import budget_link  # noqa: F401,E402
 import budget_coverage  # noqa: F401,E402
 import dashboard_patch  # noqa: F401,E402
+import receivables  # noqa: F401,E402
