@@ -38,7 +38,22 @@ def treasury_forecast(company_id,opening_balance):
         limit=today+timedelta(days=days);ins=sum(e['amount'] for e in events if e['type']=='Cobro' and e['date']<=limit);outs=sum(e['amount'] for e in events if e['type']=='Pago' and e['date']<=limit);windows.append({'days':days,'income':ins,'outflow':outs,'balance':opening_balance+ins-outs})
     return events[:20],windows,minimum,minimum_date.strftime('%d/%m/%Y')
 
+
+def treasury_alerts(rows,events,windows,minimum,minimum_date):
+    alerts=[];today=date.today()
+    overdue_payable=sum(x['overdue_payable'] for x in rows);overdue_receivable=sum(x['overdue_receivable'] for x in rows)
+    if minimum<0:alerts.append({'level':'danger','title':'Riesgo de caja negativa','text':f'La caja podría bajar hasta ${minimum:,.0f} alrededor del {minimum_date}. Prioriza cobros o reprograma pagos.'})
+    if overdue_payable>0:alerts.append({'level':'danger','title':'Pagos vencidos','text':f'Tienes ${overdue_payable:,.0f} en compromisos vencidos que requieren atención.'})
+    if overdue_receivable>0:alerts.append({'level':'warning','title':'Cartera vencida','text':f'Tienes ${overdue_receivable:,.0f} netos vencidos por cobrar. Gestionar esta cartera puede mejorar la liquidez.'})
+    next_payment=next((e for e in events if e['type']=='Pago' and e['date']>=today),None);next_collection=next((e for e in events if e['type']=='Cobro' and e['date']>=today),None)
+    if next_payment and (not next_collection or next_payment['date']<next_collection['date']):
+        when=next_payment['date'].strftime('%d/%m/%Y');alerts.append({'level':'warning','title':'Pago antes del próximo cobro','text':f'Hay un pago de ${next_payment["amount"]:,.0f} el {when} antes del siguiente ingreso previsto.'})
+    w7=next((w for w in windows if w['days']==7),None)
+    if w7 and w7['outflow']>w7['income'] and w7['outflow']>0:alerts.append({'level':'warning','title':'Presión de caja esta semana','text':f'En 7 días se proyectan salidas por ${w7["outflow"]:,.0f} e ingresos por ${w7["income"]:,.0f}.'})
+    if not alerts:alerts.append({'level':'good','title':'Tesorería sin alertas críticas','text':'Con las fechas y movimientos registrados no se detectan riesgos inmediatos de liquidez.'})
+    return alerts[:5]
+
 @app.route('/cashflow')
 @login_required
 def cashflow():
-    cid=session['company_id'];rows=cashflow_data(cid);totals={k:sum(x[k] for x in rows) for k in ['contract','billed','retentions','net_billed','income','outflow','cash_balance','receivable','payable','projected_balance','overdue_payable','overdue_receivable']};events,windows,min_balance,min_date=treasury_forecast(cid,totals['cash_balance']);return render_template('cashflow.html',rows=rows,totals=totals,forecast_events=events,forecast_windows=windows,min_balance=min_balance,min_date=min_date)
+    cid=session['company_id'];rows=cashflow_data(cid);totals={k:sum(x[k] for x in rows) for k in ['contract','billed','retentions','net_billed','income','outflow','cash_balance','receivable','payable','projected_balance','overdue_payable','overdue_receivable']};events,windows,min_balance,min_date=treasury_forecast(cid,totals['cash_balance']);alerts=treasury_alerts(rows,events,windows,min_balance,min_date);return render_template('cashflow.html',rows=rows,totals=totals,forecast_events=events,forecast_windows=windows,min_balance=min_balance,min_date=min_date,treasury_alerts=alerts)
