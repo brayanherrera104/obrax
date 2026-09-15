@@ -5,14 +5,13 @@ from app import app,db,PG,login_required
 def ensure_cost_table():
  c=db();pk='SERIAL PRIMARY KEY' if PG else 'INTEGER PRIMARY KEY AUTOINCREMENT';r='DOUBLE PRECISION' if PG else 'REAL'
  c.execute(f'''CREATE TABLE IF NOT EXISTS project_costs(id {pk},company_id INTEGER NOT NULL,project_id INTEGER NOT NULL,cost_date TEXT NOT NULL,category TEXT NOT NULL,description TEXT NOT NULL,supplier TEXT,amount {r} DEFAULT 0,payment_status TEXT DEFAULT 'Pagado')''')
+ try:c.execute('ALTER TABLE project_costs ADD COLUMN budget_item_id INTEGER')
+ except Exception:c.rollback()
  c.execute(f'''CREATE TABLE IF NOT EXISTS project_control_meta(project_id INTEGER PRIMARY KEY,company_id INTEGER NOT NULL,progress {r} DEFAULT 0,updated_at TEXT)''')
  c.execute(f'''CREATE TABLE IF NOT EXISTS project_activity_progress(project_id INTEGER NOT NULL,company_id INTEGER NOT NULL,budget_item_id INTEGER NOT NULL,progress {r} DEFAULT 0,updated_at TEXT,PRIMARY KEY(project_id,budget_item_id))''');c.commit();c.close()
 
 def project_budget_items(c,project_id,company_id):
  return c.execute('''SELECT bi.id,bi.description,bi.unit,bi.quantity,bi.unit_price,(bi.quantity*bi.unit_price) total FROM budget_items bi JOIN budgets b ON b.id=bi.budget_id WHERE b.project_id=? AND b.company_id=? ORDER BY bi.id''',(project_id,company_id)).fetchall()
-
-def project_budget_total(c,project_id,company_id):
- return sum((x['total'] or 0) for x in project_budget_items(c,project_id,company_id))
 
 def manual_progress(c,project_id,company_id):
  m=c.execute('SELECT progress FROM project_control_meta WHERE project_id=? AND company_id=?',(project_id,company_id)).fetchone();return float(m['progress'] or 0) if m else 0
@@ -20,7 +19,9 @@ def manual_progress(c,project_id,company_id):
 def activity_data(c,project_id,company_id):
  items=project_budget_items(c,project_id,company_id);rows=[];weighted=0;total=sum((x['total'] or 0) for x in items)
  for x in items:
-  r=c.execute('SELECT progress FROM project_activity_progress WHERE project_id=? AND company_id=? AND budget_item_id=?',(project_id,company_id,x['id'])).fetchone();pct=float(r['progress'] or 0) if r else 0;value=x['total'] or 0;weighted+=value*pct/100;rows.append({'id':x['id'],'description':x['description'],'unit':x['unit'],'quantity':x['quantity'],'total':value,'progress':pct,'weight':(value/total*100 if total else 0)})
+  r=c.execute('SELECT progress FROM project_activity_progress WHERE project_id=? AND company_id=? AND budget_item_id=?',(project_id,company_id,x['id'])).fetchone();pct=float(r['progress'] or 0) if r else 0;value=x['total'] or 0;weighted+=value*pct/100
+  cr=c.execute('SELECT COALESCE(SUM(amount),0) real_cost FROM project_costs WHERE project_id=? AND company_id=? AND budget_item_id=?',(project_id,company_id,x['id'])).fetchone();real=float(cr['real_cost'] or 0);target=value*pct/100;dev=real-target
+  rows.append({'id':x['id'],'description':x['description'],'unit':x['unit'],'quantity':x['quantity'],'total':value,'progress':pct,'weight':(value/total*100 if total else 0),'real_cost':real,'target_cost':target,'deviation':dev})
  return rows,(weighted/total*100 if total else 0)
 
 @app.route('/project/<int:project_id>/progress',methods=['POST'])
@@ -52,11 +53,13 @@ def activity_progress(project_id):
 def project_control(project_id):
  ensure_cost_table();cid=session['company_id'];c=db();p=c.execute("SELECT p.*,COALESCE(cl.name,p.client,'') client_name FROM projects p LEFT JOIN clients cl ON cl.id=p.client_id WHERE p.id=? AND p.company_id=?",(project_id,cid)).fetchone()
  if not p:c.close();return 'Obra no encontrada',404
+ budget_items=project_budget_items(c,project_id,cid);valid_ids={x['id'] for x in budget_items}
  if request.method=='POST':
   amount=float(request.form.get('amount',0) or 0)
   if amount<=0:c.close();flash('Ingresa un valor de costo mayor a cero.');return redirect(url_for('project_control',project_id=project_id))
-  c.execute('INSERT INTO project_costs(company_id,project_id,cost_date,category,description,supplier,amount,payment_status) VALUES(?,?,?,?,?,?,?,?)',(cid,project_id,request.form.get('cost_date') or date.today().isoformat(),request.form.get('category','Otros'),request.form['description'].strip(),request.form.get('supplier','').strip(),amount,request.form.get('payment_status','Pagado')));c.commit();c.close();flash('Costo registrado.');return redirect(url_for('project_control',project_id=project_id))
- costs=c.execute('SELECT * FROM project_costs WHERE project_id=? AND company_id=? ORDER BY cost_date DESC,id DESC',(project_id,cid)).fetchall();actual=sum(x['amount'] or 0 for x in costs);paid=sum((x['amount'] or 0) for x in costs if x['payment_status']=='Pagado');pending=sum((x['amount'] or 0) for x in costs if x['payment_status']=='Pendiente');activities,weighted_progress=activity_data(c,project_id,cid);budget=sum(x['total'] for x in activities);has_budget=budget>0;manual=manual_progress(c,project_id,cid);has_activity_progress=any(x['progress']>0 for x in activities);progress=weighted_progress if has_activity_progress else manual;progress_source='Actividades' if has_activity_progress else 'Manual';target_cost=(budget*progress/100) if has_budget else None;progress_deviation=(actual-target_cost) if has_budget else None
+  raw=request.form.get('budget_item_id','').strip();item_id=int(raw) if raw.isdigit() and int(raw) in valid_ids else None
+  c.execute('INSERT INTO project_costs(company_id,project_id,cost_date,category,description,supplier,amount,payment_status,budget_item_id) VALUES(?,?,?,?,?,?,?,?,?)',(cid,project_id,request.form.get('cost_date') or date.today().isoformat(),request.form.get('category','Otros'),request.form['description'].strip(),request.form.get('supplier','').strip(),amount,request.form.get('payment_status','Pagado'),item_id));c.commit();c.close();flash('Costo registrado y asignado a la actividad.');return redirect(url_for('project_control',project_id=project_id))
+ costs=c.execute('''SELECT pc.*,bi.description activity_name FROM project_costs pc LEFT JOIN budget_items bi ON bi.id=pc.budget_item_id WHERE pc.project_id=? AND pc.company_id=? ORDER BY pc.cost_date DESC,pc.id DESC''',(project_id,cid)).fetchall();actual=sum(x['amount'] or 0 for x in costs);paid=sum((x['amount'] or 0) for x in costs if x['payment_status']=='Pagado');pending=sum((x['amount'] or 0) for x in costs if x['payment_status']=='Pendiente');activities,weighted_progress=activity_data(c,project_id,cid);budget=sum(x['total'] for x in activities);has_budget=budget>0;manual=manual_progress(c,project_id,cid);has_activity_progress=any(x['progress']>0 for x in activities);progress=weighted_progress if has_activity_progress else manual;progress_source='Actividades' if has_activity_progress else 'Manual';target_cost=(budget*progress/100) if has_budget else None;progress_deviation=(actual-target_cost) if has_budget else None
  if not has_budget:health='Sin presupuesto'
  elif progress<=0:health='Sin avance reportado'
  elif progress_deviation > target_cost*0.05:health='Sobre presupuesto'
