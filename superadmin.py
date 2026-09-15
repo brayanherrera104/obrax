@@ -6,10 +6,10 @@ from app import app,db,PG
 
 ADMIN_EMAIL=os.environ.get('OBRAX_SUPERADMIN_EMAIL','').strip().lower();ADMIN_PASSWORD=os.environ.get('OBRAX_SUPERADMIN_PASSWORD','')
 PLANS={
- 'Prueba':{'price':'Gratis · 14 días','description':'Para conocer OBRAX antes de contratar.','features':['1 empresa','Hasta 3 obras','Hasta 10 APUs','Presupuestos y cotizaciones PDF']},
- 'Básico':{'price':'$49.900 COP / mes','description':'Para independientes y contratistas pequeños.','features':['Hasta 10 obras','Hasta 50 APUs','Clientes y presupuestos','Cotizaciones con logo']},
- 'Pro':{'price':'$99.900 COP / mes','description':'Para constructoras y metalmecánicas en crecimiento.','features':['Obras y APUs ilimitados','Control de costos','Reportes avanzados','Soporte prioritario']},
- 'Empresa':{'price':'$199.900 COP / mes','description':'Para equipos con mayor operación.','features':['Todo Pro','Múltiples usuarios (próximamente)','Roles y permisos (próximamente)','Soporte empresarial']}}
+ 'Prueba':{'price':'Gratis · 14 días','description':'Para conocer OBRAX antes de contratar.','features':['1 empresa','Hasta 3 obras','Hasta 10 APUs','Presupuestos y cotizaciones PDF'],'projects':3,'apus':10},
+ 'Básico':{'price':'$49.900 COP / mes','description':'Para independientes y contratistas pequeños.','features':['Hasta 10 obras','Hasta 50 APUs','Clientes y presupuestos','Cotizaciones con logo'],'projects':10,'apus':50},
+ 'Pro':{'price':'$99.900 COP / mes','description':'Para constructoras y metalmecánicas en crecimiento.','features':['Obras y APUs ilimitados','Control de costos','Reportes avanzados','Soporte prioritario'],'projects':None,'apus':None},
+ 'Empresa':{'price':'$199.900 COP / mes','description':'Para equipos con mayor operación.','features':['Todo Pro','Múltiples usuarios (próximamente)','Roles y permisos (próximamente)','Soporte empresarial'],'projects':None,'apus':None}}
 
 def ensure_admin_tables():
  c=db();c.execute('''CREATE TABLE IF NOT EXISTS company_admin_meta(company_id INTEGER PRIMARY KEY,plan TEXT DEFAULT 'Prueba',is_active INTEGER DEFAULT 1,created_at TEXT,last_seen_at TEXT,last_admin_action TEXT)''');c.commit()
@@ -36,6 +36,13 @@ def refresh_subscription(company_id):
    if datetime.fromisoformat(m['expires_at']) < datetime.utcnow() and m['subscription_status']!='Vencida':c.execute('UPDATE company_admin_meta SET subscription_status=? WHERE company_id=?',('Vencida',company_id));c.commit()
   except Exception:pass
  c.close()
+def check_plan_limit(company_id,resource):
+ c=db();m=c.execute('SELECT plan FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();plan=(m['plan'] if m and m['plan'] in PLANS else 'Prueba');limit=PLANS[plan][resource]
+ if limit is None:c.close();return None
+ table='projects' if resource=='projects' else 'apus';count=c.execute(f'SELECT COUNT(*) n FROM {table} WHERE company_id=?',(company_id,)).fetchone()['n'];c.close()
+ if count>=limit:
+  label='obras' if resource=='projects' else 'APUs';return f'Has alcanzado el límite de {limit} {label} de tu plan {plan}. Mejora tu plan para continuar.'
+ return None
 @app.before_request
 def superadmin_company_guard():
  ensure_admin_tables();cid=session.get('company_id')
@@ -43,6 +50,14 @@ def superadmin_company_guard():
  ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
+ # Límites reales en servidor. Cubren creación y duplicación, no solo botones visuales.
+ resource=None
+ if request.method=='POST' and request.path=='/projects':resource='projects'
+ elif request.method=='POST' and request.path=='/apus':resource='apus'
+ elif request.method=='POST' and request.path.startswith('/apu/') and request.path.endswith('/duplicate'):resource='apus'
+ if resource:
+  msg=check_plan_limit(cid,resource)
+  if msg:flash(msg);return redirect('/projects' if resource=='projects' else '/apus')
 @app.route('/billing')
 def billing():
  cid=session.get('company_id')
