@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block content %}
+<link rel="stylesheet" href="/static/cashflow.css">
+<div class="cf-page">
+<section class="cf-head"><span class="eyebrow">TESORERÍA</span><h1>Flujo de caja</h1><p>Mira cuánto dinero realmente ha entrado, cuánto ha salido y qué compromisos vienen por delante.</p></section>
+<section class="cf-kpis">
+<div class="cf-kpi"><span>Entradas reales</span><strong>${{ '{:,.0f}'.format(totals.income) }}</strong><small>Abonos efectivamente cobrados</small></div>
+<div class="cf-kpi"><span>Salidas reales</span><strong>${{ '{:,.0f}'.format(totals.outflow) }}</strong><small>Costos efectivamente pagados</small></div>
+<div class="cf-kpi balance {% if totals.cash_balance < 0 %}negative{% endif %}"><span>Saldo de caja</span><strong>${{ '{:,.0f}'.format(totals.cash_balance) }}</strong><small>Entradas − salidas</small></div>
+<div class="cf-kpi"><span>Flujo proyectado</span><strong>${{ '{:,.0f}'.format(totals.projected_balance) }}</strong><small>Incluye pendientes por cobrar y pagar</small></div>
+</section>
+<section class="cf-card cf-future"><div><span class="eyebrow">PRÓXIMOS MOVIMIENTOS</span><h2>Compromisos pendientes</h2><p>Esto todavía no es caja real. Son valores pendientes que pueden afectar el saldo futuro.</p></div><div class="cf-future-grid"><div><span>Por cobrar</span><b>${{ '{:,.0f}'.format(totals.receivable) }}</b>{% if totals.overdue_receivable > 0 %}<small class="bad">${{ '{:,.0f}'.format(totals.overdue_receivable) }} vencido</small>{% endif %}</div><div><span>Por pagar</span><b>${{ '{:,.0f}'.format(totals.payable) }}</b>{% if totals.overdue_payable > 0 %}<small class="bad">${{ '{:,.0f}'.format(totals.overdue_payable) }} vencido</small>{% endif %}</div></div></section>
+<section class="cf-card"><div class="cf-title"><div><span class="eyebrow">POR OBRA</span><h2>Posición de caja</h2><p>Compara recaudos y pagos de cada proyecto.</p></div></div><div class="cf-projects">
+{% for p in rows %}<article class="cf-project"><div class="cf-project-head"><div><span>OBRA</span><h3>{{p.name}}</h3><small>{{p.client_name}}</small></div><span class="cf-status {% if p.cash_balance < 0 %}red{% elif p.cash_balance > 0 %}green{% endif %}">{% if p.cash_balance < 0 %}Caja negativa{% elif p.cash_balance > 0 %}Caja positiva{% else %}Sin movimiento{% endif %}</span></div><div class="cf-values"><div><span>Contrato</span><b>${{ '{:,.0f}'.format(p.contract) }}</b></div><div><span>Facturado</span><b>${{ '{:,.0f}'.format(p.billed) }}</b></div><div><span>Cobrado</span><b>${{ '{:,.0f}'.format(p.income) }}</b></div><div><span>Pagado</span><b>${{ '{:,.0f}'.format(p.outflow) }}</b></div><div><span>Saldo de caja</span><b class="{% if p.cash_balance < 0 %}bad{% else %}good{% endif %}">${{ '{:,.0f}'.format(p.cash_balance) }}</b></div><div><span>Flujo proyectado</span><b>${{ '{:,.0f}'.format(p.projected_balance) }}</b></div></div><div class="cf-links"><a class="btn" href="/receivables?project_id={{p.id}}">Por cobrar</a><a class="btn" href="/payables?project_id={{p.id}}">Por pagar</a><a class="btn primary" href="/project/{{p.id}}/control">Control de obra</a></div></article>{% else %}<div class="cf-empty">Todavía no tienes obras registradas.</div>{% endfor %}
+</div></section></div>
+{% endblock %}
