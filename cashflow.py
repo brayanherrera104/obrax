@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from flask import render_template, session
 from app import app, db, login_required
 import control_obra
@@ -14,7 +14,31 @@ def cashflow_data(company_id,project_id=None):
         result.append({'id':p['id'],'name':p['name'],'client_name':p['client_name'],'contract':float(p['value'] or 0),'billed':billed,'retentions':retentions,'net_billed':net_billed,'income':income,'outflow':outflow,'cash_balance':income-outflow,'receivable':receivable,'payable':payable,'projected_balance':income+receivable-outflow-payable,'overdue_payable':overdue_payable,'overdue_receivable':overdue_receivable})
     c.close();return result
 
+
+def treasury_forecast(company_id,opening_balance):
+    control_obra.ensure_cost_table();receivables.ensure_receivables_table();c=db();today=date.today();events=[]
+    recs=c.execute("SELECT r.*,p.name project_name FROM project_receivables r JOIN projects p ON p.id=r.project_id WHERE r.company_id=?",(company_id,)).fetchall()
+    for r in recs:
+        balance=receivables.calc(r)[2]
+        if balance<=0:continue
+        try:d=date.fromisoformat(r['due_date']) if r['due_date'] else today
+        except Exception:d=today
+        events.append({'date':d,'type':'Cobro','project':r['project_name'],'concept':r['concept'],'amount':balance})
+    costs=c.execute("SELECT pc.*,p.name project_name FROM project_costs pc JOIN projects p ON p.id=pc.project_id WHERE pc.company_id=? AND pc.payment_status='Pendiente'",(company_id,)).fetchall()
+    for x in costs:
+        try:d=date.fromisoformat(x['due_date']) if x['due_date'] else today
+        except Exception:d=today
+        events.append({'date':d,'type':'Pago','project':x['project_name'],'concept':x['concept'] or 'Costo pendiente','amount':float(x['amount'] or 0)})
+    c.close();events.sort(key=lambda x:(x['date'],0 if x['type']=='Pago' else 1));running=opening_balance;minimum=opening_balance;minimum_date=today
+    for e in events:
+        running+=e['amount'] if e['type']=='Cobro' else -e['amount'];e['balance']=running;e['date_label']=e['date'].strftime('%d/%m/%Y')
+        if running<minimum:minimum=running;minimum_date=e['date']
+    windows=[]
+    for days in (7,15,30,60):
+        limit=today+timedelta(days=days);ins=sum(e['amount'] for e in events if e['type']=='Cobro' and e['date']<=limit);outs=sum(e['amount'] for e in events if e['type']=='Pago' and e['date']<=limit);windows.append({'days':days,'income':ins,'outflow':outs,'balance':opening_balance+ins-outs})
+    return events[:20],windows,minimum,minimum_date.strftime('%d/%m/%Y')
+
 @app.route('/cashflow')
 @login_required
 def cashflow():
-    cid=session['company_id'];rows=cashflow_data(cid);totals={k:sum(x[k] for x in rows) for k in ['contract','billed','retentions','net_billed','income','outflow','cash_balance','receivable','payable','projected_balance','overdue_payable','overdue_receivable']};return render_template('cashflow.html',rows=rows,totals=totals)
+    cid=session['company_id'];rows=cashflow_data(cid);totals={k:sum(x[k] for x in rows) for k in ['contract','billed','retentions','net_billed','income','outflow','cash_balance','receivable','payable','projected_balance','overdue_payable','overdue_receivable']};events,windows,min_balance,min_date=treasury_forecast(cid,totals['cash_balance']);return render_template('cashflow.html',rows=rows,totals=totals,forecast_events=events,forecast_windows=windows,min_balance=min_balance,min_date=min_date)
