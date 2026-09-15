@@ -68,6 +68,22 @@ def project_control(project_id):
  contract=p['value'] or 0;expected_profit=(contract-budget) if has_budget else None;real_profit=contract-actual;real_margin=(real_profit/contract*100) if contract else None;c.close()
  return render_template('project_control.html',project=p,costs=costs,budget=budget,has_budget=has_budget,actual=actual,paid=paid,pending=pending,expected_profit=expected_profit,real_profit=real_profit,real_margin=real_margin,progress=progress,manual_progress=manual,progress_source=progress_source,target_cost=target_cost,progress_deviation=progress_deviation,health=health,activities=activities,today=date.today().isoformat())
 
+@app.route('/project/<int:project_id>/cost/<int:cost_id>/edit',methods=['POST'])
+@login_required
+def project_cost_edit(project_id,cost_id):
+ ensure_cost_table();cid=session['company_id'];c=db();cost=c.execute('SELECT id FROM project_costs WHERE id=? AND project_id=? AND company_id=?',(cost_id,project_id,cid)).fetchone()
+ if not cost:c.close();return 'Movimiento no encontrado',404
+ valid_ids={x['id'] for x in project_budget_items(c,project_id,cid)}
+ try:amount=float(request.form.get('amount',0) or 0)
+ except:amount=0
+ if amount<=0:c.close();flash('El valor debe ser mayor a cero.');return redirect(url_for('project_control',project_id=project_id))
+ raw=request.form.get('budget_item_id','').strip();item_id=int(raw) if raw.isdigit() and int(raw) in valid_ids else None;category=request.form.get('category','Otros');status=request.form.get('payment_status','Pagado')
+ if category not in ['Materiales','Mano de obra','Equipos','Transporte','Subcontratos','Otros']:category='Otros'
+ if status not in ['Pagado','Pendiente']:status='Pagado'
+ description=request.form.get('description','').strip()
+ if not description:c.close();flash('La descripción es obligatoria.');return redirect(url_for('project_control',project_id=project_id))
+ c.execute('''UPDATE project_costs SET cost_date=?,budget_item_id=?,category=?,description=?,supplier=?,amount=?,payment_status=? WHERE id=? AND project_id=? AND company_id=?''',(request.form.get('cost_date') or date.today().isoformat(),item_id,category,description,request.form.get('supplier','').strip(),amount,status,cost_id,project_id,cid));c.commit();c.close();flash('Movimiento actualizado correctamente.');return redirect(url_for('project_control',project_id=project_id))
+
 @app.route('/project/<int:project_id>/cost/<int:cost_id>/delete',methods=['POST'])
 @login_required
 def project_cost_delete(project_id,cost_id):
