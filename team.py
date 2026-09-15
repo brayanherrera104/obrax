@@ -1,40 +1,60 @@
 from flask import render_template,request,redirect,url_for,session,flash
 from functools import wraps
-from werkzeug.security import generate_password_hash
-from app import app,db,PG,login_required
+from werkzeug.security import generate_password_hash,check_password_hash
+from app import app,db,PG
 
 MODULES=[('dashboard','Dashboard'),('apus','APUs'),('clients','Clientes'),('projects','Obras'),('budgets','Presupuestos'),('quotations','Cotizaciones'),('control','Control de obra'),('payables','Por pagar'),('receivables','Por cobrar'),('cashflow','Flujo de caja')]
-ROLE_DEFAULTS={
- 'Gerente':[x[0] for x in MODULES],
- 'Administrativo':['dashboard','clients','projects','budgets','quotations','payables','receivables','cashflow'],
- 'Residente':['dashboard','projects','control','apus'],
- 'Consulta':['dashboard','projects','control']
-}
+ROLE_DEFAULTS={'Gerente':[x[0] for x in MODULES],'Administrativo':['dashboard','clients','projects','budgets','quotations','payables','receivables','cashflow'],'Residente':['dashboard','projects','control','apus'],'Consulta':['dashboard','projects','control']}
+PATH_MODULES=[('/cashflow','cashflow'),('/receivables','receivables'),('/payables','payables'),('/quotations','quotations'),('/quotation/','quotations'),('/budgets','budgets'),('/budget/','budgets'),('/clients','clients'),('/apus','apus'),('/apu/','apus'),('/projects','projects'),('/project/','control'),('/dashboard','dashboard')]
 
 def ensure_team_tables():
- c=db();pk='SERIAL PRIMARY KEY' if PG else 'INTEGER PRIMARY KEY AUTOINCREMENT'
- c.execute(f'''CREATE TABLE IF NOT EXISTS company_users(id {pk},company_id INTEGER NOT NULL,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT DEFAULT 'Consulta',is_active INTEGER DEFAULT 1)''')
- c.execute('''CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER NOT NULL,module TEXT NOT NULL,can_view INTEGER DEFAULT 0,can_create INTEGER DEFAULT 0,can_edit INTEGER DEFAULT 0,can_delete INTEGER DEFAULT 0,PRIMARY KEY(user_id,module))''')
- c.execute('''CREATE TABLE IF NOT EXISTS user_projects(user_id INTEGER NOT NULL,project_id INTEGER NOT NULL,PRIMARY KEY(user_id,project_id))''');c.commit();c.close()
+ c=db();pk='SERIAL PRIMARY KEY' if PG else 'INTEGER PRIMARY KEY AUTOINCREMENT';c.execute(f'''CREATE TABLE IF NOT EXISTS company_users(id {pk},company_id INTEGER NOT NULL,name TEXT NOT NULL,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,role TEXT DEFAULT 'Consulta',is_active INTEGER DEFAULT 1)''');c.execute('''CREATE TABLE IF NOT EXISTS user_permissions(user_id INTEGER NOT NULL,module TEXT NOT NULL,can_view INTEGER DEFAULT 0,can_create INTEGER DEFAULT 0,can_edit INTEGER DEFAULT 0,can_delete INTEGER DEFAULT 0,PRIMARY KEY(user_id,module))''');c.execute('''CREATE TABLE IF NOT EXISTS user_projects(user_id INTEGER NOT NULL,project_id INTEGER NOT NULL,PRIMARY KEY(user_id,project_id))''');c.commit();c.close()
+
+def employee_permission(module,action='view'):
+ if not session.get('user_id'):return True
+ c=db();u=c.execute('SELECT is_active FROM company_users WHERE id=? AND company_id=?',(session['user_id'],session['company_id'])).fetchone()
+ if not u or not u['is_active']:c.close();return False
+ col={'view':'can_view','create':'can_create','edit':'can_edit','delete':'can_delete'}.get(action,'can_view');p=c.execute(f'SELECT {col} ok FROM user_permissions WHERE user_id=? AND module=?',(session['user_id'],module)).fetchone();c.close();return bool(p and p['ok'])
+def employee_project_allowed(project_id):
+ if not session.get('user_id'):return True
+ c=db();x=c.execute('SELECT 1 ok FROM user_projects WHERE user_id=? AND project_id=?',(session['user_id'],project_id)).fetchone();c.close();return bool(x)
 
 def company_admin_required(f):
  @wraps(f)
  def w(*a,**k):
-  if not session.get('company_id'):return redirect(url_for('login'))
-  if session.get('user_id'):flash('Solo el administrador de la empresa puede gestionar el equipo.');return redirect(url_for('dashboard'))
+  if not session.get('company_id'):return redirect('/login')
+  if session.get('user_id'):flash('Solo el administrador de la empresa puede gestionar el equipo.');return redirect('/dashboard')
   return f(*a,**k)
  return w
 
 def set_permissions(c,user_id,modules,role):
- c.execute('DELETE FROM user_permissions WHERE user_id=?',(user_id,))
- allowed=set(modules or ROLE_DEFAULTS.get(role,[]))
+ c.execute('DELETE FROM user_permissions WHERE user_id=?',(user_id,));allowed=set(modules or ROLE_DEFAULTS.get(role,[]))
  for key,_ in MODULES:
   v=1 if key in allowed else 0;c.execute('INSERT INTO user_permissions(user_id,module,can_view,can_create,can_edit,can_delete) VALUES(?,?,?,?,?,?)',(user_id,key,v,v,v,0))
-
 def set_projects(c,user_id,projects):
  c.execute('DELETE FROM user_projects WHERE user_id=?',(user_id,))
  for x in projects:
   if str(x).isdigit():c.execute('INSERT INTO user_projects(user_id,project_id) VALUES(?,?)',(user_id,int(x)))
+
+@app.before_request
+def team_access_guard():
+ ensure_team_tables()
+ if not session.get('user_id'):return None
+ path=request.path
+ if path in ['/logout','/login'] or path.startswith('/static/'):return None
+ module=next((m for prefix,m in PATH_MODULES if path==prefix or path.startswith(prefix)),None)
+ if module:
+  action='view'
+  if request.method=='POST':
+   if '/delete' in path:action='delete'
+   elif '/edit' in path or '/progress' in path or '/payment' in path or '/pay' in path:action='edit'
+   else:action='create'
+  if not employee_permission(module,action):flash('No tienes permiso para realizar esta acción.');return redirect('/dashboard')
+  if path.startswith('/project/'):
+   try:pid=int(path.split('/')[2])
+   except:pid=None
+   if pid and not employee_project_allowed(pid):flash('Esta obra no está asignada a tu usuario.');return redirect('/projects')
+ return None
 
 @app.route('/team',methods=['GET','POST'])
 @company_admin_required
