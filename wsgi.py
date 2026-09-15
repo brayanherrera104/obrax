@@ -1,3 +1,4 @@
-# OBRAX WSGI entrypoint: carga la app principal y registra las rutas del Superadmin.
+# OBRAX WSGI entrypoint: carga la app principal y registra módulos de plataforma.
 from app import app
 import superadmin  # noqa: F401,E402
+import control_obra  # noqa: F401,E402
