@@ -1,5 +1,21 @@
 {% extends "base.html" %}{% block content %}
 <div class="head"><div><span class="pill">CRM básico</span><h1>Clientes</h1><p>Centraliza los datos de quienes contratan tus obras.</p></div></div>
 <form class="formcard grid6" method="post"><input name="name" placeholder="Empresa / cliente" required><input name="nit" placeholder="NIT / CC"><input name="contact" placeholder="Contacto"><input name="phone" placeholder="Teléfono"><input name="email" type="email" placeholder="Correo"><button class="btn primary">+ Crear cliente</button></form>
-<section class="panel"><table><tr><th>Cliente</th><th>NIT</th><th>Contacto</th><th>Teléfono</th><th>Correo</th></tr>{% for c in clients %}<tr><td><b>{{c.name}}</b></td><td>{{c.nit}}</td><td>{{c.contact}}</td><td>{{c.phone}}</td><td>{{c.email}}</td></tr>{% else %}<tr><td colspan="5">Aún no tienes clientes registrados.</td></tr>{% endfor %}</table></section>
+<section class="panel clients-desktop"><table><tr><th>Cliente</th><th>NIT</th><th>Contacto</th><th>Teléfono</th><th>Correo</th></tr>{% for c in clients %}<tr><td><b>{{c.name}}</b></td><td>{{c.nit or '—'}}</td><td>{{c.contact or '—'}}</td><td>{{c.phone or '—'}}</td><td>{{c.email or '—'}}</td></tr>{% else %}<tr><td colspan="5">Aún no tienes clientes registrados.</td></tr>{% endfor %}</table></section>
+<section class="clients-mobile">{% for c in clients %}<article class="client-mobile-card"><div class="client-mobile-title"><span>CLIENTE</span><strong>{{c.name}}</strong></div><div class="client-mobile-grid"><div><span>NIT / CC</span><b>{{c.nit or '—'}}</b></div><div><span>CONTACTO</span><b>{{c.contact or '—'}}</b></div><div><span>TELÉFONO</span>{% if c.phone %}<a href="tel:{{c.phone}}">{{c.phone}}</a>{% else %}<b>—</b>{% endif %}</div><div><span>CORREO</span>{% if c.email %}<a href="mailto:{{c.email}}">{{c.email}}</a>{% else %}<b>—</b>{% endif %}</div></div></article>{% else %}<div class="client-mobile-card">Aún no tienes clientes registrados.</div>{% endfor %}</section>
+<style>
+.clients-mobile{display:none}
+@media(max-width:700px){
+.clients-desktop{display:none}
+.clients-mobile{display:grid;gap:16px;margin:0 18px 28px}
+.client-mobile-card{background:#fff;border:1px solid #e0e6ee;border-radius:18px;padding:22px;box-shadow:0 10px 30px rgba(20,32,51,.05);min-width:0}
+.client-mobile-title{padding-bottom:18px;border-bottom:1px solid #edf1f5;margin-bottom:18px}
+.client-mobile-title span,.client-mobile-grid span{display:block;font-size:12px;font-weight:850;letter-spacing:.06em;color:#748094;margin-bottom:6px}
+.client-mobile-title strong{display:block;font-size:23px;line-height:1.2;color:#142033;overflow-wrap:anywhere}
+.client-mobile-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 16px}
+.client-mobile-grid b,.client-mobile-grid a{display:block;font-size:16px;line-height:1.35;color:#142033;overflow-wrap:anywhere;text-decoration:none}
+.client-mobile-grid a{text-decoration:underline;text-decoration-color:#cbd5e1;text-underline-offset:3px}
+}
+@media(max-width:390px){.client-mobile-grid{grid-template-columns:1fr}.client-mobile-card{padding:20px}}
+</style>
 {% endblock %}
