@@ -8,3 +8,4 @@ import dashboard_patch  # noqa: F401,E402
 import receivables  # noqa: F401,E402
 import cashflow  # noqa: F401,E402
 import team  # noqa: F401,E402
+import employee_auth  # noqa: F401,E402
