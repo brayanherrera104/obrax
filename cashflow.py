@@ -28,7 +28,7 @@ def treasury_forecast(company_id,opening_balance):
     for x in costs:
         try:d=date.fromisoformat(x['due_date']) if x['due_date'] else today
         except Exception:d=today
-        events.append({'date':d,'type':'Pago','project':x['project_name'],'concept':x['concept'] or 'Costo pendiente','amount':float(x['amount'] or 0)})
+        events.append({'date':d,'type':'Pago','project':x['project_name'],'concept':x['description'] or 'Costo pendiente','amount':float(x['amount'] or 0)})
     c.close();events.sort(key=lambda x:(x['date'],0 if x['type']=='Pago' else 1));running=opening_balance;minimum=opening_balance;minimum_date=today
     for e in events:
         running+=e['amount'] if e['type']=='Cobro' else -e['amount'];e['balance']=running;e['date_label']=e['date'].strftime('%d/%m/%Y')
