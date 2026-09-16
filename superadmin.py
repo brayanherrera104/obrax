@@ -46,7 +46,11 @@ def check_plan_limit(company_id,resource):
 def superadmin_company_guard():
  ensure_admin_tables();cid=session.get('company_id')
  if not cid:return None
- ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
+ ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active,plan,subscription_status FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
+ if m:
+  # Keep navigation and UI entitlements synchronized with Superadmin changes on every request.
+  session['company_plan']=normalize_plan(m['plan'] or 'Prueba')
+  session['subscription_status']=m['subscription_status'] or 'Prueba'
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
  resource=None
@@ -110,11 +114,7 @@ def superadmin_company_delete(company_id):
  c=db();co=c.execute('SELECT id,name FROM companies WHERE id=?',(company_id,)).fetchone()
  if not co:c.close();flash('La empresa ya no existe.');return redirect(url_for('superadmin_dashboard'))
  try:
-  # IDs necesarios para limpiar tablas hijas sin depender de ON DELETE CASCADE.
-  users=[x['id'] for x in c.execute('SELECT id FROM company_users WHERE company_id=?',(company_id,)).fetchall()]
-  projects=[x['id'] for x in c.execute('SELECT id FROM projects WHERE company_id=?',(company_id,)).fetchall()]
-  budgets=[x['id'] for x in c.execute('SELECT id FROM budgets WHERE company_id=?',(company_id,)).fetchall()]
-  apus=[x['id'] for x in c.execute('SELECT id FROM apus WHERE company_id=?',(company_id,)).fetchall()]
+  users=[x['id'] for x in c.execute('SELECT id FROM company_users WHERE company_id=?',(company_id,)).fetchall()];projects=[x['id'] for x in c.execute('SELECT id FROM projects WHERE company_id=?',(company_id,)).fetchall()];budgets=[x['id'] for x in c.execute('SELECT id FROM budgets WHERE company_id=?',(company_id,)).fetchall()];apus=[x['id'] for x in c.execute('SELECT id FROM apus WHERE company_id=?',(company_id,)).fetchall()]
   for uid in users:c.execute('DELETE FROM user_permissions WHERE user_id=?',(uid,));c.execute('DELETE FROM user_projects WHERE user_id=?',(uid,))
   for pid in projects:
    for table in ['project_activity_progress','project_control_meta','project_costs','project_receivables']:
@@ -126,7 +126,6 @@ def superadmin_company_delete(company_id):
    try:c.execute(f'DELETE FROM {table} WHERE company_id=?',(company_id,))
    except Exception:pass
   c.execute('DELETE FROM companies WHERE id=?',(company_id,));c.commit();name=co['name'];c.close();flash(f'Empresa {name} y sus datos fueron eliminados permanentemente.')
- except Exception:
-  c.rollback();c.close();flash('No se pudo eliminar la empresa. No se realizaron cambios.')
+ except Exception:c.rollback();c.close();flash('No se pudo eliminar la empresa. No se realizaron cambios.')
  return redirect(url_for('superadmin_dashboard'))
 ensure_admin_tables()
