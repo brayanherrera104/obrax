@@ -3,13 +3,9 @@ from functools import wraps
 from datetime import datetime,timedelta
 from flask import render_template,request,redirect,url_for,session,flash
 from app import app,db,PG
+from plans import PLANS,normalize_plan,plan_limit,plan_has_module
 
 ADMIN_EMAIL=os.environ.get('OBRAX_SUPERADMIN_EMAIL','').strip().lower();ADMIN_PASSWORD=os.environ.get('OBRAX_SUPERADMIN_PASSWORD','')
-PLANS={
- 'Prueba':{'price':'Gratis · 14 días','description':'Para conocer OBRAX antes de contratar.','features':['1 empresa','Hasta 3 obras','Hasta 10 APUs','Presupuestos y cotizaciones PDF'],'projects':3,'apus':10},
- 'Básico':{'price':'$49.900 COP / mes','description':'Para independientes y contratistas pequeños.','features':['Hasta 10 obras','Hasta 50 APUs','Clientes y presupuestos','Cotizaciones con logo'],'projects':10,'apus':50},
- 'Pro':{'price':'$99.900 COP / mes','description':'Para constructoras y metalmecánicas en crecimiento.','features':['Obras y APUs ilimitados','Control de costos','Reportes avanzados','Soporte prioritario'],'projects':None,'apus':None},
- 'Empresa':{'price':'$199.900 COP / mes','description':'Para equipos con mayor operación.','features':['Todo Pro','Múltiples usuarios (próximamente)','Roles y permisos (próximamente)','Soporte empresarial'],'projects':None,'apus':None}}
 
 def ensure_admin_tables():
  c=db();c.execute('''CREATE TABLE IF NOT EXISTS company_admin_meta(company_id INTEGER PRIMARY KEY,plan TEXT DEFAULT 'Prueba',is_active INTEGER DEFAULT 1,created_at TEXT,last_seen_at TEXT,last_admin_action TEXT)''');c.commit()
@@ -25,6 +21,9 @@ def ensure_company_meta(company_id):
  if not m:
   now=datetime.utcnow();exp=(now+timedelta(days=14)).isoformat(timespec='seconds');c.execute('INSERT INTO company_admin_meta(company_id,plan,is_active,created_at,last_seen_at,subscription_status,expires_at) VALUES(?,?,?,?,?,?,?)',(company_id,'Prueba',1,now.isoformat(timespec='seconds'),now.isoformat(timespec='seconds'),'Prueba',exp));c.commit()
  c.close()
+def company_plan(company_id):
+ c=db();m=c.execute('SELECT plan FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();c.close();return normalize_plan(m['plan'] if m else 'Prueba')
+def company_has_module(company_id,module):return plan_has_module(company_plan(company_id),module)
 def superadmin_required(f):
  @wraps(f)
  def w(*a,**k):return f(*a,**k) if session.get('superadmin') else redirect(url_for('superadmin_login'))
@@ -37,11 +36,15 @@ def refresh_subscription(company_id):
   except Exception:pass
  c.close()
 def check_plan_limit(company_id,resource):
- c=db();m=c.execute('SELECT plan FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();plan=(m['plan'] if m and m['plan'] in PLANS else 'Prueba');limit=PLANS[plan][resource]
- if limit is None:c.close();return None
- table='projects' if resource=='projects' else 'apus';count=c.execute(f'SELECT COUNT(*) n FROM {table} WHERE company_id=?',(company_id,)).fetchone()['n'];c.close()
+ plan=company_plan(company_id);limit=plan_limit(plan,resource)
+ if limit is None:return None
+ c=db()
+ if resource=='users':table='company_users'
+ elif resource=='projects':table='projects'
+ else:table='apus'
+ count=c.execute(f'SELECT COUNT(*) n FROM {table} WHERE company_id=?',(company_id,)).fetchone()['n'];c.close()
  if count>=limit:
-  label='obras' if resource=='projects' else 'APUs';return f'Has alcanzado el límite de {limit} {label} de tu plan {plan}. Mejora tu plan para continuar.'
+  label={'users':'usuarios','projects':'obras','apus':'APUs'}[resource];return f'Has alcanzado el límite de {limit} {label} de tu plan {plan}. Mejora tu plan para continuar.'
  return None
 @app.before_request
 def superadmin_company_guard():
@@ -50,19 +53,27 @@ def superadmin_company_guard():
  ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
- # Límites reales en servidor. Cubren creación y duplicación, no solo botones visuales.
  resource=None
  if request.method=='POST' and request.path=='/projects':resource='projects'
  elif request.method=='POST' and request.path=='/apus':resource='apus'
  elif request.method=='POST' and request.path.startswith('/apu/') and request.path.endswith('/duplicate'):resource='apus'
+ elif request.method=='POST' and request.path=='/team':resource='users'
  if resource:
   msg=check_plan_limit(cid,resource)
-  if msg:flash(msg);return redirect('/projects' if resource=='projects' else '/apus')
+  if msg:flash(msg);return redirect({'projects':'/projects','apus':'/apus','users':'/team'}[resource])
+ # Bloqueo de módulos financieros por plan. Se valida en servidor, no solo en el menú.
+ path=request.path
+ module=None
+ if path.startswith('/receivables'):module='receivables'
+ elif path.startswith('/cashflow'):module='cashflow'
+ elif path.startswith('/treasury'):module='treasury'
+ if module and not company_has_module(cid,module):
+  flash(f'Esta función no está incluida en tu plan {company_plan(cid)}. Está disponible desde OBRAX Pro.');return redirect('/billing')
 @app.route('/billing')
 def billing():
  cid=session.get('company_id')
  if not cid:return redirect(url_for('login'))
- ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT * FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone();c.close();return render_template('billing.html',plans=PLANS,current_plan=m['plan'] or 'Prueba',subscription_status=m['subscription_status'] or 'Prueba',expires_at=m['expires_at'])
+ ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT * FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone();c.close();return render_template('billing.html',plans=PLANS,current_plan=normalize_plan(m['plan'] or 'Prueba'),subscription_status=m['subscription_status'] or 'Prueba',expires_at=m['expires_at'])
 @app.route('/superadmin/login',methods=['GET','POST'])
 def superadmin_login():
  if request.method=='POST':
@@ -83,7 +94,7 @@ def superadmin_dashboard():
 @app.route('/superadmin/company/<int:company_id>/update',methods=['POST'])
 @superadmin_required
 def superadmin_company_update(company_id):
- ensure_company_meta(company_id);plan=request.form.get('plan','Prueba');plan=plan if plan in PLANS else 'Prueba';active=1 if request.form.get('is_active')=='1' else 0;c=db();old=c.execute('SELECT plan,expires_at FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();now=datetime.utcnow();exp_raw=request.form.get('expires_at','').strip();exp=None
+ ensure_company_meta(company_id);plan=normalize_plan(request.form.get('plan','Prueba'));active=1 if request.form.get('is_active')=='1' else 0;c=db();old=c.execute('SELECT plan,expires_at FROM company_admin_meta WHERE company_id=?',(company_id,)).fetchone();now=datetime.utcnow();exp_raw=request.form.get('expires_at','').strip();exp=None
  if exp_raw:
   try:exp=datetime.fromisoformat(exp_raw).replace(hour=23,minute=59,second=59).isoformat(timespec='seconds')
   except Exception:exp=None
