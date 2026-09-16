@@ -1,6 +1,6 @@
 from flask import render_template,request,redirect,session,flash
 from functools import wraps
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash,check_password_hash
 from app import app,db,PG
 from plan_capacity import sync_user_capacity,user_plan_enabled
 from plans import plan_limit
@@ -47,7 +47,7 @@ def team_access_guard():
  ensure_team_tables()
  if not session.get('user_id'):return None
  path=request.path
- if path in ['/logout','/login'] or path.startswith('/static/'):return None
+ if path in ['/logout','/login','/account/password'] or path.startswith('/static/'):return None
  module=next((m for prefix,m in PATH_MODULES if path==prefix or path.startswith(prefix)),None)
  if module:
   action='view'
@@ -88,4 +88,35 @@ def team_update(user_id):
  ensure_team_tables();cid=session['company_id'];c=db();u=c.execute('SELECT id FROM company_users WHERE id=? AND company_id=?',(user_id,cid)).fetchone()
  if not u:c.close();return 'Usuario no encontrado',404
  role=request.form.get('role','Consulta');active=1 if request.form.get('is_active')=='1' else 0;c.execute('UPDATE company_users SET name=?,role=?,is_active=? WHERE id=? AND company_id=?',(request.form.get('name','').strip(),role,active,user_id,cid));set_permissions(c,user_id,posted_permissions(request.form));set_projects(c,user_id,request.form.getlist('projects'));c.commit();c.close();flash('Permisos del usuario actualizados.');return redirect('/team')
+
+@app.route('/team/<int:user_id>/password',methods=['POST'])
+@company_admin_required
+def team_password(user_id):
+ cid=session['company_id'];password=request.form.get('new_password','')
+ if len(password)<6:flash('La nueva contraseña debe tener mínimo 6 caracteres.');return redirect('/team')
+ c=db();u=c.execute('SELECT id FROM company_users WHERE id=? AND company_id=?',(user_id,cid)).fetchone()
+ if not u:c.close();flash('Usuario no encontrado.');return redirect('/team')
+ c.execute('UPDATE company_users SET password_hash=? WHERE id=? AND company_id=?',(generate_password_hash(password),user_id,cid));c.commit();c.close();flash('Contraseña temporal actualizada. El usuario ya puede ingresar con la nueva contraseña.');return redirect('/team')
+
+@app.route('/team/<int:user_id>/delete',methods=['POST'])
+@company_admin_required
+def team_delete(user_id):
+ cid=session['company_id'];c=db();u=c.execute('SELECT id,name FROM company_users WHERE id=? AND company_id=?',(user_id,cid)).fetchone()
+ if not u:c.close();flash('Usuario no encontrado.');return redirect('/team')
+ c.execute('DELETE FROM user_permissions WHERE user_id=?',(user_id,));c.execute('DELETE FROM user_projects WHERE user_id=?',(user_id,));c.execute('DELETE FROM company_users WHERE id=? AND company_id=?',(user_id,cid));c.commit();c.close();sync_user_capacity(cid,session.get('company_plan','Prueba'));flash(f'Usuario {u["name"]} eliminado. El cupo quedó disponible.');return redirect('/team')
+
+@app.route('/account/password',methods=['GET','POST'])
+def account_password():
+ if not session.get('company_id'):return redirect('/login')
+ if request.method=='GET':return render_template('change_password.html')
+ current=request.form.get('current_password','');new=request.form.get('new_password','');confirm=request.form.get('confirm_password','')
+ if len(new)<6:flash('La nueva contraseña debe tener mínimo 6 caracteres.');return redirect('/account/password')
+ if new!=confirm:flash('Las contraseñas nuevas no coinciden.');return redirect('/account/password')
+ c=db()
+ if session.get('user_id'):
+  row=c.execute('SELECT password_hash FROM company_users WHERE id=? AND company_id=?',(session['user_id'],session['company_id'])).fetchone();table='company_users';where_id=session['user_id']
+ else:
+  row=c.execute('SELECT password_hash FROM companies WHERE id=?',(session['company_id'],)).fetchone();table='companies';where_id=session['company_id']
+ if not row or not check_password_hash(row['password_hash'],current):c.close();flash('La contraseña actual no es correcta.');return redirect('/account/password')
+ c.execute(f'UPDATE {table} SET password_hash=? WHERE id=?',(generate_password_hash(new),where_id));c.commit();c.close();flash('Contraseña actualizada correctamente.');return redirect('/dashboard')
 ensure_team_tables()
