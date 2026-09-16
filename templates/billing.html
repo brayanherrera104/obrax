@@ -1,13 +1,18 @@
 {% extends 'base.html' %}{% block content %}
-<div class="page-head"><span class="eyebrow">PLAN Y FACTURACIÓN</span><h1>Elige el plan para tu empresa</h1><p>Empieza probando OBRAX y escala cuando tu operación lo necesite.</p></div>
+<div class="page-head"><span class="eyebrow">PLAN Y FACTURACIÓN</span><h1>Elige el plan para tu empresa</h1><p>Empieza probando OBRAX y escala cuando tu operación lo necesite. Precios antes de IVA.</p></div>
+<div class="billing-toggle"><button class="cycle active" type="button" data-cycle="monthly">Mensual</button><button class="cycle" type="button" data-cycle="annual">Anual <b>AHORRA ~17%</b></button></div>
 <div class="plan-grid">
 {% for key,p in plans.items() %}
-<div class="plan-card {% if current_plan==key %}plan-current{% endif %}">
-  {% if current_plan==key %}<span class="plan-badge">Plan actual</span>{% endif %}
-  <h2>{{ key }}</h2><div class="plan-price">{{ p.price }}</div><p>{{ p.description }}</p>
-  <ul>{% for f in p.features %}<li>✓ {{ f }}</li>{% endfor %}</ul>
-  {% if current_plan==key %}<button class="btn secondary" disabled>Plan activo</button>{% elif key=='Empresa' %}<a class="btn primary" href="mailto:ventas@obrax.co?subject=Plan Empresa OBRAX">Contactar</a>{% else %}<button class="btn primary" disabled>Próximamente</button>{% endif %}
+<div class="plan-card {% if current_plan==key %}plan-current{% endif %} {% if key=='Pro' %}plan-popular{% endif %}">
+  {% if key=='Pro' %}<span class="popular-badge">MÁS POPULAR</span>{% endif %}{% if current_plan==key %}<span class="plan-badge">Plan actual</span>{% endif %}
+  <h2>{{ key }}</h2>
+  {% if key=='Prueba' %}<div class="plan-price">Gratis</div><div class="plan-period">14 días</div>{% else %}
+  <div class="price-monthly"><div class="plan-price">${{ '{:,.0f}'.format(p.monthly).replace(',', '.') }} <small>+ IVA</small></div><div class="plan-period">por mes</div></div>
+  <div class="price-annual" style="display:none"><div class="plan-price">${{ '{:,.0f}'.format(p.annual).replace(',', '.') }} <small>+ IVA</small></div><div class="plan-period">por año · equivale a ${{ '{:,.0f}'.format(p.annual/12).replace(',', '.') }}/mes</div><div class="annual-save">Ahorras ${{ '{:,.0f}'.format((p.monthly*12)-p.annual).replace(',', '.') }} al año</div></div>{% endif %}
+  <p>{{ p.description }}</p><ul>{% for f in p.features %}<li>✓ {{ f }}</li>{% endfor %}</ul>
+  {% if current_plan==key %}<button class="btn secondary" disabled>Plan activo</button>{% elif key=='Prueba' %}<button class="btn secondary" disabled>Prueba inicial</button>{% else %}<button class="btn primary" disabled>Próximamente</button>{% endif %}
 </div>{% endfor %}
 </div>
-<div class="panel billing-note"><h2>Estado de la suscripción</h2><p><b>{{ current_plan }}</b> · {{ subscription_status }}{% if expires_at %} · Vigente hasta {{ expires_at }}{% endif %}</p><p class="muted">El cobro en línea se habilitará en la siguiente fase. Por ahora el Superadministrador puede asignar planes manualmente.</p></div>
+<div class="panel billing-note"><h2>Estado de la suscripción</h2><p><b>{{ current_plan }}</b> · {{ subscription_status }}{% if expires_at %} · Vigente hasta {{ expires_at }}{% endif %}</p><p class="muted">El cobro en línea se habilitará en una siguiente fase. Por ahora el Superadministrador asigna los planes manualmente.</p></div>
+<script>document.querySelectorAll('.cycle').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.cycle').forEach(x=>x.classList.remove('active'));b.classList.add('active');var annual=b.dataset.cycle==='annual';document.querySelectorAll('.price-monthly').forEach(x=>x.style.display=annual?'none':'block');document.querySelectorAll('.price-annual').forEach(x=>x.style.display=annual?'block':'none')})});</script>
 {% endblock %}
