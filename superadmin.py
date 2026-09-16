@@ -38,11 +38,7 @@ def refresh_subscription(company_id):
 def check_plan_limit(company_id,resource):
  plan=company_plan(company_id);limit=plan_limit(plan,resource)
  if limit is None:return None
- c=db()
- if resource=='users':table='company_users'
- elif resource=='projects':table='projects'
- else:table='apus'
- count=c.execute(f'SELECT COUNT(*) n FROM {table} WHERE company_id=?',(company_id,)).fetchone()['n'];c.close()
+ c=db();table='company_users' if resource=='users' else ('projects' if resource=='projects' else 'apus');count=c.execute(f'SELECT COUNT(*) n FROM {table} WHERE company_id=?',(company_id,)).fetchone()['n'];c.close()
  if count>=limit:
   label={'users':'usuarios','projects':'obras','apus':'APUs'}[resource];return f'Has alcanzado el límite de {limit} {label} de tu plan {plan}. Mejora tu plan para continuar.'
  return None
@@ -61,14 +57,11 @@ def superadmin_company_guard():
  if resource:
   msg=check_plan_limit(cid,resource)
   if msg:flash(msg);return redirect({'projects':'/projects','apus':'/apus','users':'/team'}[resource])
- # Bloqueo de módulos financieros por plan. Se valida en servidor, no solo en el menú.
- path=request.path
- module=None
+ path=request.path;module=None
  if path.startswith('/receivables'):module='receivables'
  elif path.startswith('/cashflow'):module='cashflow'
  elif path.startswith('/treasury'):module='treasury'
- if module and not company_has_module(cid,module):
-  flash(f'Esta función no está incluida en tu plan {company_plan(cid)}. Está disponible desde OBRAX Pro.');return redirect('/billing')
+ if module and not company_has_module(cid,module):flash(f'Esta función no está incluida en tu plan {company_plan(cid)}. Está disponible desde OBRAX Pro.');return redirect('/billing')
 @app.route('/billing')
 def billing():
  cid=session.get('company_id')
@@ -110,4 +103,30 @@ def superadmin_company_renew(company_id):
    current=datetime.fromisoformat(m['expires_at']);base=current if current>now else now
   except Exception:pass
  new_exp=(base+timedelta(days=30)).isoformat(timespec='seconds');status='Prueba' if (m and m['plan']=='Prueba') else 'Activa';c.execute('UPDATE company_admin_meta SET expires_at=?,subscription_status=?,is_active=1,last_admin_action=? WHERE company_id=?',(new_exp,status,now.isoformat(timespec='seconds'),company_id));c.commit();c.close();flash('Suscripción renovada por 30 días.');return redirect(url_for('superadmin_dashboard'))
+@app.route('/superadmin/company/<int:company_id>/delete',methods=['POST'])
+@superadmin_required
+def superadmin_company_delete(company_id):
+ if request.form.get('confirmation','').strip().upper()!='ELIMINAR':flash('Debes escribir ELIMINAR para confirmar el borrado permanente.');return redirect(url_for('superadmin_dashboard'))
+ c=db();co=c.execute('SELECT id,name FROM companies WHERE id=?',(company_id,)).fetchone()
+ if not co:c.close();flash('La empresa ya no existe.');return redirect(url_for('superadmin_dashboard'))
+ try:
+  # IDs necesarios para limpiar tablas hijas sin depender de ON DELETE CASCADE.
+  users=[x['id'] for x in c.execute('SELECT id FROM company_users WHERE company_id=?',(company_id,)).fetchall()]
+  projects=[x['id'] for x in c.execute('SELECT id FROM projects WHERE company_id=?',(company_id,)).fetchall()]
+  budgets=[x['id'] for x in c.execute('SELECT id FROM budgets WHERE company_id=?',(company_id,)).fetchall()]
+  apus=[x['id'] for x in c.execute('SELECT id FROM apus WHERE company_id=?',(company_id,)).fetchall()]
+  for uid in users:c.execute('DELETE FROM user_permissions WHERE user_id=?',(uid,));c.execute('DELETE FROM user_projects WHERE user_id=?',(uid,))
+  for pid in projects:
+   for table in ['project_activity_progress','project_control_meta','project_costs','project_receivables']:
+    try:c.execute(f'DELETE FROM {table} WHERE project_id=?',(pid,))
+    except Exception:pass
+  for bid in budgets:c.execute('DELETE FROM budget_items WHERE budget_id=?',(bid,))
+  for aid in apus:c.execute('DELETE FROM apu_items WHERE apu_id=?',(aid,))
+  for table in ['company_users','project_receivables','project_costs','project_activity_progress','project_control_meta','quotations','budgets','apus','clients','projects','company_admin_meta']:
+   try:c.execute(f'DELETE FROM {table} WHERE company_id=?',(company_id,))
+   except Exception:pass
+  c.execute('DELETE FROM companies WHERE id=?',(company_id,));c.commit();name=co['name'];c.close();flash(f'Empresa {name} y sus datos fueron eliminados permanentemente.')
+ except Exception:
+  c.rollback();c.close();flash('No se pudo eliminar la empresa. No se realizaron cambios.')
+ return redirect(url_for('superadmin_dashboard'))
 ensure_admin_tables()
