@@ -48,11 +48,13 @@ def superadmin_company_guard():
  if not cid:return None
  ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active,plan,subscription_status FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
  if m:
-  # Keep navigation and UI entitlements synchronized with Superadmin changes on every request.
-  session['company_plan']=normalize_plan(m['plan'] or 'Prueba')
-  session['subscription_status']=m['subscription_status'] or 'Prueba'
+  session['company_plan']=normalize_plan(m['plan'] or 'Prueba');session['subscription_status']=m['subscription_status'] or 'Prueba'
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
+ # Suscripción vencida: conservar acceso de consulta, pero impedir cualquier cambio de datos.
+ # Plan, cierre de sesión y navegación GET siguen disponibles para que el cliente vea su información y pueda renovar.
+ if m and (m['subscription_status'] or '')=='Vencida' and request.method not in ('GET','HEAD','OPTIONS'):
+  flash('Tu suscripción está vencida. Tus datos están seguros y puedes consultarlos, pero debes renovar para crear, editar o registrar movimientos.');return redirect('/billing')
  resource=None
  if request.method=='POST' and request.path=='/projects':resource='projects'
  elif request.method=='POST' and request.path=='/apus':resource='apus'
@@ -85,7 +87,7 @@ def superadmin_logout():session.clear();return redirect(url_for('superadmin_logi
 @superadmin_required
 def superadmin_dashboard():
  q=request.args.get('q','').strip();c=db();base='''SELECT co.id,co.name,co.nit,co.admin_name,co.email,co.phone,COALESCE(m.plan,'Prueba') plan,COALESCE(m.is_active,1) is_active,m.created_at,m.last_seen_at,m.subscription_status,m.expires_at,(SELECT COUNT(*) FROM projects p WHERE p.company_id=co.id) projects_count,(SELECT COUNT(*) FROM apus a WHERE a.company_id=co.id) apus_count,(SELECT COUNT(*) FROM budgets b WHERE b.company_id=co.id) budgets_count,(SELECT COUNT(*) FROM quotations qt WHERE qt.company_id=co.id) quotes_count,(SELECT COUNT(*) FROM clients cl WHERE cl.company_id=co.id) clients_count FROM companies co LEFT JOIN company_admin_meta m ON m.company_id=co.id'''
- if q:rows=c.execute(base+" WHERE LOWER(co.name) LIKE ? OR LOWER(co.email) LIKE ? OR LOWER(COALESCE(co.nit,'')) LIKE ? ORDER BY co.id DESC",('%'+q.lower()+'%','%'+q.lower()+'%','%'+q.lower()+'%')).fetchall()
+ if q:rows=c.execute(base+" WHERE LOWER(co.name) LIKE ? OR LOWER(co.email) LIKE ? OR LOWER(COALESCE(co.nit,'')) LIKE ? ORDER BY co.id DESC",('%'+q.lower()+'%','%'+q.lower()+'%','%'+q.lower()+'%','%'+q.lower()+'%')).fetchall()
  else:rows=c.execute(base+' ORDER BY co.id DESC').fetchall()
  total=c.execute('SELECT COUNT(*) n FROM companies').fetchone()['n'];active=c.execute('SELECT COUNT(*) n FROM company_admin_meta WHERE is_active=1').fetchone()['n'];apus=c.execute('SELECT COUNT(*) n FROM apus').fetchone()['n'];quotes=c.execute('SELECT COUNT(*) n FROM quotations').fetchone()['n'];c.close();return render_template('superadmin_dashboard.html',companies=rows,total=total,active=active,apus=apus,quotes=quotes,q=q)
 @app.route('/superadmin/company/<int:company_id>/update',methods=['POST'])
