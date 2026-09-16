@@ -3,6 +3,7 @@ from functools import wraps
 from werkzeug.security import generate_password_hash
 from app import app,db,PG
 from plan_capacity import sync_user_capacity,user_plan_enabled
+from plans import plan_limit
 
 MODULES=[('dashboard','Dashboard'),('apus','APUs'),('clients','Clientes'),('projects','Obras'),('budgets','Presupuestos'),('quotations','Cotizaciones'),('control','Control de obra'),('payables','Por pagar'),('receivables','Por cobrar'),('cashflow','Flujo de caja')]
 ACTIONS=('view','create','edit','delete')
@@ -73,12 +74,14 @@ def team():
    set_permissions(c,u,posted_permissions(request.form));set_projects(c,u,request.form.getlist('projects'));c.commit();flash('Usuario creado con sus permisos y obras asignadas.')
   except Exception:c.rollback();flash('No se pudo crear el usuario. Verifica que el correo no esté registrado.')
   c.close();return redirect('/team')
- users=c.execute('SELECT * FROM company_users WHERE company_id=? ORDER BY name',(cid,)).fetchall();projects=c.execute('SELECT id,name FROM projects WHERE company_id=? ORDER BY name',(cid,)).fetchall();data=[];c.close();sync_user_capacity(cid,session.get('company_plan','Prueba'));c=db()
+ users=c.execute('SELECT * FROM company_users WHERE company_id=? ORDER BY name',(cid,)).fetchall();projects=c.execute('SELECT id,name FROM projects WHERE company_id=? ORDER BY name',(cid,)).fetchall();data=[];c.close();plan=session.get('company_plan','Prueba');sync_user_capacity(cid,plan);c=db()
  for u in users:
   d=dict(u);d['plan_enabled']=user_plan_enabled(cid,u['id']);d['permissions']={}
   for x in c.execute('SELECT * FROM user_permissions WHERE user_id=?',(u['id'],)).fetchall():d['permissions'][x['module']]={'view':bool(x['can_view']),'create':bool(x['can_create']),'edit':bool(x['can_edit']),'delete':bool(x['can_delete'])}
   d['projects']=[x['project_id'] for x in c.execute('SELECT project_id FROM user_projects WHERE user_id=?',(u['id'],)).fetchall()];data.append(d)
- c.close();return render_template('team.html',users=data,projects=projects,modules=MODULES,role_defaults=ROLE_DEFAULTS)
+ c.close();total_users=len(data);operational_users=sum(1 for u in data if u['plan_enabled']);out_of_plan=total_users-operational_users;limit=plan_limit(plan,'users')
+ user_summary={'plan':plan,'total':total_users,'operational':operational_users,'out_of_plan':out_of_plan,'limit':limit,'limit_text':'Ilimitados' if limit is None else str(limit)}
+ return render_template('team.html',users=data,projects=projects,modules=MODULES,role_defaults=ROLE_DEFAULTS,user_summary=user_summary)
 @app.route('/team/<int:user_id>/update',methods=['POST'])
 @company_admin_required
 def team_update(user_id):
