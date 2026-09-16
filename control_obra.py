@@ -28,21 +28,24 @@ def activity_data(c,project_id,company_id):
  return rows,(weighted/total*100 if total else 0)
 
 def project_financials(c,project_id,company_id,contract,budget,actual,progress):
- # Cartera neta: el dinero que realmente se espera recibir después de retenciones.
  try:receivables=c.execute('SELECT * FROM project_receivables WHERE project_id=? AND company_id=?',(project_id,company_id)).fetchall()
  except Exception:receivables=[]
  billed=retentions=net_expected=collected=receivable_pending=0
  for x in receivables:
-  gross=float(x['amount'] or 0);rf=float(x['retefuente_pct'] or 0);ri=float(x['reteica_pct'] or 0);rv=float(x['reteiva_pct'] or 0);other=float(x['other_withholding'] or 0);ret=max(0,gross*(rf+ri+rv)/100+other);net=max(0,gross-ret);paid=float(x['paid_amount'] or 0)
-  billed+=gross;retentions+=ret;net_expected+=net;collected+=paid;receivable_pending+=max(0,net-paid)
- payable=sum(float(x['amount'] or 0) for x in c.execute("SELECT amount FROM project_costs WHERE project_id=? AND company_id=? AND payment_status='Pendiente'",(project_id,company_id)).fetchall())
- target=(budget*progress/100) if budget>0 else None;deviation=(actual-target) if target is not None else None;projected_cost=(actual/progress*100) if progress>0 else (budget if budget>0 else None);projected_profit=(contract-projected_cost) if projected_cost is not None else None;projected_margin=(projected_profit/contract*100) if projected_profit is not None and contract else None
+  gross=float(x['amount'] or 0);rf=float(x['retefuente_pct'] or 0);ri=float(x['reteica_pct'] or 0);rv=float(x['reteiva_pct'] or 0);other=float(x['other_withholding'] or 0);ret=max(0,gross*(rf+ri+rv)/100+other);net=max(0,gross-ret);paid=float(x['paid_amount'] or 0);billed+=gross;retentions+=ret;net_expected+=net;collected+=paid;receivable_pending+=max(0,net-paid)
+ payable=sum(float(x['amount'] or 0) for x in c.execute("SELECT amount FROM project_costs WHERE project_id=? AND company_id=? AND payment_status='Pendiente'",(project_id,company_id)).fetchall());target=(budget*progress/100) if budget>0 else None;deviation=(actual-target) if target is not None else None;projected_cost=(actual/progress*100) if progress>0 else (budget if budget>0 else None);projected_profit=(contract-projected_cost) if projected_cost is not None else None;projected_margin=(projected_profit/contract*100) if projected_profit is not None and contract else None
  if budget<=0:level='info';title='Falta presupuesto definitivo';message='Vincula un presupuesto a la obra para medir desviaciones y proyectar la utilidad.'
  elif progress<=0:level='info';title='Falta avance de obra';message='Registra el avance físico para comparar el costo real contra el costo esperado.'
  elif deviation is not None and deviation>target*.05:level='danger';title='Atención: costos por encima de lo esperado';message=f'La obra lleva ${abs(deviation):,.0f} más de costo que lo esperado para su avance actual.'
  elif deviation is not None and deviation<(-target*.05):level='success';title='Costos por debajo de lo esperado';message=f'La obra lleva ${abs(deviation):,.0f} menos de costo que lo esperado para su avance actual. Verifica que todos los costos estén registrados.'
  else:level='warning';title='Costos dentro del rango esperado';message='El costo real está cerca de lo previsto para el avance actual.'
  return {'billed':billed,'retentions':retentions,'net_expected':net_expected,'collected':collected,'receivable_pending':receivable_pending,'payable':payable,'projected_cost':projected_cost,'projected_profit':projected_profit,'projected_margin':projected_margin,'alert_level':level,'alert_title':title,'alert_message':message}
+
+def assigned_projects(c):
+ if not session.get('user_id'):return None
+ return [x['project_id'] for x in c.execute('SELECT project_id FROM user_projects WHERE user_id=?',(session['user_id'],)).fetchall()]
+
+def project_allowed(project_id,allowed):return allowed is None or int(project_id) in allowed
 
 @app.route('/project/<int:project_id>/progress',methods=['POST'])
 @login_required
@@ -66,7 +69,6 @@ def activity_progress(project_id):
   if old:c.execute('UPDATE project_activity_progress SET progress=?,updated_at=? WHERE project_id=? AND company_id=? AND budget_item_id=?',(pct,date.today().isoformat(),project_id,cid,item_id))
   else:c.execute('INSERT INTO project_activity_progress(project_id,company_id,budget_item_id,progress,updated_at) VALUES(?,?,?,?,?)',(project_id,cid,item_id,pct,date.today().isoformat()))
  c.commit();c.close();flash('Avance por actividades actualizado.');return redirect(url_for('project_control',project_id=project_id))
-
 @app.route('/project/<int:project_id>/control',methods=['GET','POST'])
 @login_required
 def project_control(project_id):
@@ -86,7 +88,6 @@ def project_control(project_id):
  elif progress_deviation < -target_cost*0.05:health='Por debajo del presupuesto'
  else:health='Dentro del presupuesto'
  contract=p['value'] or 0;expected_profit=(contract-budget) if has_budget else None;real_profit=contract-actual;real_margin=(real_profit/contract*100) if contract else None;financial=project_financials(c,project_id,cid,contract,budget,actual,progress);c.close();return render_template('project_control.html',project=p,costs=costs,budget=budget,has_budget=has_budget,actual=actual,paid=paid,pending=pending,expected_profit=expected_profit,real_profit=real_profit,real_margin=real_margin,progress=progress,manual_progress=manual,progress_source=progress_source,target_cost=target_cost,progress_deviation=progress_deviation,health=health,activities=activities,financial=financial,today=date.today().isoformat())
-
 @app.route('/project/<int:project_id>/cost/<int:cost_id>/edit',methods=['POST'])
 @login_required
 def project_cost_edit(project_id,cost_id):
@@ -107,19 +108,30 @@ def project_cost_edit(project_id,cost_id):
 @login_required
 def project_cost_delete(project_id,cost_id):
  ensure_cost_table();c=db();c.execute('DELETE FROM project_costs WHERE id=? AND project_id=? AND company_id=?',(cost_id,project_id,session['company_id']));c.commit();c.close();flash('Costo eliminado.');return redirect(url_for('project_control',project_id=project_id))
-
 @app.route('/payables')
 @login_required
 def payables():
- ensure_cost_table();cid=session['company_id'];c=db();status=request.args.get('status','Todos');project=request.args.get('project_id','');supplier=request.args.get('supplier','').strip();q='''SELECT pc.*,p.name project_name,bi.description activity_name FROM project_costs pc JOIN projects p ON p.id=pc.project_id LEFT JOIN budget_items bi ON bi.id=pc.budget_item_id WHERE pc.company_id=?''';params=[cid]
+ ensure_cost_table();cid=session['company_id'];c=db();allowed=assigned_projects(c);status=request.args.get('status','Todos');project=request.args.get('project_id','');supplier=request.args.get('supplier','').strip();base=''' FROM project_costs pc JOIN projects p ON p.id=pc.project_id LEFT JOIN budget_items bi ON bi.id=pc.budget_item_id WHERE pc.company_id=?''';scope='';scope_params=[]
+ if allowed is not None:
+  if not allowed:scope=' AND 1=0'
+  else:scope=' AND pc.project_id IN ('+','.join('?' for _ in allowed)+')';scope_params=allowed
+ q='SELECT pc.*,p.name project_name,bi.description activity_name'+base+scope;params=[cid]+scope_params
  if status=='Pendiente':q+=' AND pc.payment_status=?';params.append('Pendiente')
  elif status=='Pagado':q+=' AND pc.payment_status=?';params.append('Pagado')
  elif status=='Vencido':q+=" AND pc.payment_status='Pendiente' AND pc.due_date IS NOT NULL AND pc.due_date<>'' AND pc.due_date<?";params.append(date.today().isoformat())
- if project.isdigit():q+=' AND pc.project_id=?';params.append(int(project))
+ if project.isdigit() and project_allowed(project,allowed):q+=' AND pc.project_id=?';params.append(int(project))
  if supplier:q+=" AND LOWER(COALESCE(pc.supplier,'')) LIKE ?";params.append('%'+supplier.lower()+'%')
- q+=" ORDER BY CASE WHEN pc.payment_status='Pendiente' THEN 0 ELSE 1 END,pc.due_date,pc.cost_date DESC";rows=c.execute(q,tuple(params)).fetchall();allrows=c.execute('SELECT amount,payment_status,due_date FROM project_costs WHERE company_id=?',(cid,)).fetchall();projects=c.execute('SELECT id,name FROM projects WHERE company_id=? ORDER BY name',(cid,)).fetchall();today=date.today().isoformat();total=sum(x['amount'] or 0 for x in allrows);paid=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pagado');pending=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pendiente');overdue=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pendiente' and x['due_date'] and x['due_date']<today);c.close();return render_template('payables.html',rows=rows,projects=projects,total=total,paid=paid,pending=pending,overdue=overdue,today=today,status_filter=status,project_filter=project,supplier_filter=supplier)
+ q+=" ORDER BY CASE WHEN pc.payment_status='Pendiente' THEN 0 ELSE 1 END,pc.due_date,pc.cost_date DESC";rows=c.execute(q,tuple(params)).fetchall();allrows=c.execute('SELECT pc.amount,pc.payment_status,pc.due_date'+base+scope,tuple([cid]+scope_params)).fetchall()
+ if allowed is None:projects=c.execute('SELECT id,name FROM projects WHERE company_id=? ORDER BY name',(cid,)).fetchall()
+ elif not allowed:projects=[]
+ else:projects=c.execute('SELECT id,name FROM projects WHERE company_id=? AND id IN ('+','.join('?' for _ in allowed)+') ORDER BY name',tuple([cid]+allowed)).fetchall()
+ today=date.today().isoformat();total=sum(x['amount'] or 0 for x in allrows);paid=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pagado');pending=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pendiente');overdue=sum((x['amount'] or 0) for x in allrows if x['payment_status']=='Pendiente' and x['due_date'] and x['due_date']<today);c.close();return render_template('payables.html',rows=rows,projects=projects,total=total,paid=paid,pending=pending,overdue=overdue,today=today,status_filter=status,project_filter=project,supplier_filter=supplier)
 @app.route('/payables/<int:cost_id>/pay',methods=['POST'])
 @login_required
 def payable_pay(cost_id):
- ensure_cost_table();c=db();c.execute("UPDATE project_costs SET payment_status='Pagado',due_date=NULL WHERE id=? AND company_id=?",(cost_id,session['company_id']));c.commit();c.close();flash('Cuenta marcada como pagada.');return redirect(request.referrer or url_for('payables'))
+ ensure_cost_table();cid=session['company_id'];c=db();row=c.execute('SELECT project_id FROM project_costs WHERE id=? AND company_id=?',(cost_id,cid)).fetchone()
+ if not row:c.close();return 'Cuenta no encontrada',404
+ allowed=assigned_projects(c)
+ if not project_allowed(row['project_id'],allowed):c.close();flash('Esta obra no está asignada a tu usuario.');return redirect(url_for('payables'))
+ c.execute("UPDATE project_costs SET payment_status='Pagado',due_date=NULL WHERE id=? AND company_id=?",(cost_id,cid));c.commit();c.close();flash('Cuenta marcada como pagada.');return redirect(request.referrer or url_for('payables'))
 ensure_cost_table()
