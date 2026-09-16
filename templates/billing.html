@@ -13,6 +13,9 @@
   {% if current_plan==key %}<button class="btn secondary" disabled>Plan activo</button>{% elif key=='Prueba' %}<button class="btn secondary" disabled>Prueba inicial</button>{% else %}<button class="btn primary" disabled>Próximamente</button>{% endif %}
 </div>{% endfor %}
 </div>
-<div class="panel billing-note"><h2>Estado de la suscripción</h2><p><b>{{ current_plan }}</b> · {{ subscription_status }}{% if expires_at %} · Vigente hasta {{ expires_at }}{% endif %}</p><p class="muted">El cobro en línea se habilitará en una siguiente fase. Por ahora el Superadministrador asigna los planes manualmente.</p></div>
-<script>document.querySelectorAll('.cycle').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.cycle').forEach(x=>x.classList.remove('active'));b.classList.add('active');var annual=b.dataset.cycle==='annual';document.querySelectorAll('.price-monthly').forEach(x=>x.style.display=annual?'none':'block');document.querySelectorAll('.price-annual').forEach(x=>x.style.display=annual?'block':'none')})});</script>
+<div class="panel billing-note"><h2>Estado de la suscripción</h2><p><b>{{ current_plan }}</b> · {{ subscription_status }}{% if expires_at %} · Vigente hasta <span class="subscription-date" data-date="{{ expires_at }}">{{ expires_at[:10] }}</span>{% endif %}</p><p class="muted">El cobro en línea se habilitará en una siguiente fase. Por ahora el Superadministrador asigna los planes manualmente.</p></div>
+<script>
+document.querySelectorAll('.cycle').forEach(function(b){b.addEventListener('click',function(){document.querySelectorAll('.cycle').forEach(x=>x.classList.remove('active'));b.classList.add('active');var annual=b.dataset.cycle==='annual';document.querySelectorAll('.price-monthly').forEach(x=>x.style.display=annual?'none':'block');document.querySelectorAll('.price-annual').forEach(x=>x.style.display=annual?'block':'none')})});
+document.querySelectorAll('.subscription-date').forEach(function(el){var raw=el.dataset.date||'';var d=raw.slice(0,10).split('-');if(d.length===3)el.textContent=d[2]+'/'+d[1]+'/'+d[0];});
+</script>
 {% endblock %}
