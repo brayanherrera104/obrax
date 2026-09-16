@@ -44,15 +44,18 @@ def check_plan_limit(company_id,resource):
  return None
 @app.before_request
 def superadmin_company_guard():
- ensure_admin_tables();cid=session.get('company_id')
+ ensure_admin_tables()
+ # El Superadministrador es independiente de cualquier sesión de empresa.
+ # Así una empresa vencida nunca puede bloquear el acceso a /superadmin ni sus acciones.
+ if request.path.startswith('/superadmin'):
+  return None
+ cid=session.get('company_id')
  if not cid:return None
  ensure_company_meta(cid);refresh_subscription(cid);c=db();m=c.execute('SELECT is_active,plan,subscription_status FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
  if m:
   session['company_plan']=normalize_plan(m['plan'] or 'Prueba');session['subscription_status']=m['subscription_status'] or 'Prueba'
  if m and int(m['is_active'] or 0)==0:session.clear();c.close();flash('Esta cuenta está temporalmente bloqueada. Contacta al soporte de OBRAX.');return redirect(url_for('login'))
  c.execute('UPDATE company_admin_meta SET last_seen_at=? WHERE company_id=?',(datetime.utcnow().isoformat(timespec='seconds'),cid));c.commit();c.close()
- # Suscripción vencida: conservar acceso de consulta, pero impedir cualquier cambio de datos.
- # Plan, cierre de sesión y navegación GET siguen disponibles para que el cliente vea su información y pueda renovar.
  if m and (m['subscription_status'] or '')=='Vencida' and request.method not in ('GET','HEAD','OPTIONS'):
   flash('Tu suscripción está vencida. Tus datos están seguros y puedes consultarlos, pero debes renovar para crear, editar o registrar movimientos.');return redirect('/billing')
  resource=None
