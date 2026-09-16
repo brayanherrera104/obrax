@@ -4,6 +4,12 @@ from plans import plan_limit
 
 def ensure_plan_capacity_tables():
  c=db();c.execute('''CREATE TABLE IF NOT EXISTS plan_project_access(company_id INTEGER NOT NULL,project_id INTEGER NOT NULL,is_enabled INTEGER DEFAULT 1,PRIMARY KEY(company_id,project_id))''');c.execute('''CREATE TABLE IF NOT EXISTS plan_user_access(company_id INTEGER NOT NULL,user_id INTEGER NOT NULL,is_enabled INTEGER DEFAULT 1,PRIMARY KEY(company_id,user_id))''');c.execute('''CREATE TABLE IF NOT EXISTS plan_apu_access(company_id INTEGER NOT NULL,apu_id INTEGER NOT NULL,is_enabled INTEGER DEFAULT 1,PRIMARY KEY(company_id,apu_id))''');c.commit();c.close()
+def current_company_plan(cid):
+ # La base de datos es la fuente de verdad. Evita que una sesión antigua reactive/desactive cupos con un plan anterior.
+ c=db()
+ try:m=c.execute('SELECT plan FROM company_admin_meta WHERE company_id=?',(cid,)).fetchone()
+ except Exception:m=None
+ c.close();plan=m['plan'] if m and m['plan'] else (session.get('company_plan') or 'Prueba');session['company_plan']=plan;return plan
 def _sync_capacity(company_id,plan,resource,table,id_col,source_table):
  ensure_plan_capacity_tables();c=db();ids=[x['id'] for x in c.execute(f'SELECT id FROM {source_table} WHERE company_id=? ORDER BY id DESC',(company_id,)).fetchall()];limit=plan_limit(plan,resource)
  if limit is None:
@@ -42,15 +48,16 @@ def set_apu_plan_enabled(cid,rid,e,plan):return _set_enabled(cid,rid,e,plan,'apu
 @app.route('/team/<int:user_id>/plan-access/<action>',methods=['POST'])
 def user_plan_access(user_id,action):
  if not session.get('company_id') or session.get('user_id'):return redirect('/dashboard')
- _,msg=set_user_plan_enabled(session['company_id'],user_id,action=='activate',session.get('company_plan','Prueba'));flash(msg);return redirect('/team')
+ cid=session['company_id'];plan=current_company_plan(cid);_,msg=set_user_plan_enabled(cid,user_id,action=='activate',plan);flash(msg);return redirect('/team')
 @app.route('/apu/<int:apu_id>/plan-access/<action>',methods=['POST'])
 def apu_plan_access(apu_id,action):
  if not session.get('company_id'):return redirect('/login')
- _,msg=set_apu_plan_enabled(session['company_id'],apu_id,action=='activate',session.get('company_plan','Prueba'));flash(msg);return redirect('/apus')
+ cid=session['company_id'];plan=current_company_plan(cid);_,msg=set_apu_plan_enabled(cid,apu_id,action=='activate',plan);flash(msg);return redirect('/apus')
 @app.before_request
 def plan_capacity_guard():
- cid=session.get('company_id');plan=session.get('company_plan')
- if not cid or not plan:return None
+ cid=session.get('company_id')
+ if not cid:return None
+ plan=current_company_plan(cid)
  sync_project_capacity(cid,plan);sync_user_capacity(cid,plan);sync_apu_capacity(cid,plan)
  if session.get('user_id') and not user_plan_enabled(cid,session['user_id']):session.clear();flash('Tu usuario está fuera de los cupos activos del plan de la empresa. Contacta al administrador.');return redirect('/login')
  path=request.path
