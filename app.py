@@ -51,7 +51,12 @@ def items(c,aid):
  for i,x in enumerate(n):
   if x.strip():c.execute('INSERT INTO apu_items(apu_id,resource_type,name,unit,qty,waste_pct,price) VALUES(?,?,?,?,?,?,?)',(aid,t[i],x,u[i],float(q[i] or 0),float(w[i] or 0),float(p[i] or 0)))
 @app.route('/')
-def landing():return render_template('landing.html')
+def landing():
+ host=request.host.split(':')[0].lower()
+ if host=='app.obrax.com.co':
+  if session.get('company_id') or session.get('demo'):return redirect(url_for('dashboard'))
+  return render_template('app_home.html')
+ return render_template('landing.html')
 @app.route('/demo')
 def demo():session.clear();session['demo']=1;return redirect(url_for('dashboard'))
 @app.route('/register',methods=['GET','POST'])
