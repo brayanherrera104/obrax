@@ -11,8 +11,6 @@ def _project_perm(c,user_id,action):
 
 
 def _can_view_financials(c,user_id):
- # El administrador siempre puede ver finanzas. Para empleados exigimos permiso de lectura
- # en un modulo financiero; no basta con tener acceso a Control de obra.
  if not user_id:return True
  for module in ('cashflow','receivables'):
   try:
@@ -24,8 +22,7 @@ def _can_view_financials(c,user_id):
 
 def _project_metrics(c,cid,p,show_financials):
  pid=p['id'];contract=float(p['value'] or 0) if 'value' in p.keys() else 0
- try:
-  budget=float(c.execute('''SELECT COALESCE(SUM(bi.quantity*bi.unit_price),0) total FROM budget_items bi JOIN budgets b ON b.id=bi.budget_id WHERE b.project_id=? AND b.company_id=?''',(pid,cid)).fetchone()['total'] or 0)
+ try:budget=float(c.execute('''SELECT COALESCE(SUM(bi.quantity*bi.unit_price),0) total FROM budget_items bi JOIN budgets b ON b.id=bi.budget_id WHERE b.project_id=? AND b.company_id=?''',(pid,cid)).fetchone()['total'] or 0)
  except Exception:budget=0
  try:actual=float(c.execute('SELECT COALESCE(SUM(amount),0) total FROM project_costs WHERE project_id=? AND company_id=?',(pid,cid)).fetchone()['total'] or 0)
  except Exception:actual=0
@@ -41,7 +38,13 @@ def _project_metrics(c,cid,p,show_financials):
    weighted+=float(x['total'] or 0)*pct/100
   if has_activity and total>0:progress=weighted/total*100
  except Exception:pass
- data={'budget':budget,'actual':actual,'progress':progress,'available':budget-actual if budget else None}
+ target=(budget*progress/100) if budget>0 and progress>0 else None
+ if budget<=0:health='Sin presupuesto';health_code='neutral'
+ elif progress<=0:health='Sin avance';health_code='neutral'
+ elif actual>target*1.05:health='Sobrecosto';health_code='danger'
+ elif actual>=target*.90:health='Atención';health_code='warning'
+ else:health='Controlado';health_code='success'
+ data={'budget':budget,'actual':actual,'progress':progress,'available':budget-actual if budget else None,'health':health,'health_code':health_code}
  if show_financials:
   billed=collected=receivable_pending=0
   try:
@@ -49,7 +52,9 @@ def _project_metrics(c,cid,p,show_financials):
    for x in rows:
     gross=float(x['amount'] or 0);rf=float(x['retefuente_pct'] or 0);ri=float(x['reteica_pct'] or 0);rv=float(x['reteiva_pct'] or 0);other=float(x['other_withholding'] or 0);net=max(0,gross-(gross*(rf+ri+rv)/100+other));paid=float(x['paid_amount'] or 0);billed+=gross;collected+=paid;receivable_pending+=max(0,net-paid)
   except Exception:pass
-  projected_cost=(actual/progress*100) if progress>0 else (budget if budget>0 else None);projected_profit=(contract-projected_cost) if projected_cost is not None else None;projected_margin=(projected_profit/contract*100) if projected_profit is not None and contract else None
+  # Solo proyectamos cuando existen presupuesto y avance. Evita presentar el presupuesto
+  # como si fuera una proyeccion real antes de que la obra tenga ejecucion medible.
+  projected_cost=(actual/progress*100) if budget>0 and progress>0 else None;projected_profit=(contract-projected_cost) if projected_cost is not None and contract>0 else None;projected_margin=(projected_profit/contract*100) if projected_profit is not None and contract else None
   data.update({'billed':billed,'collected':collected,'receivable_pending':receivable_pending,'projected_cost':projected_cost,'projected_profit':projected_profit,'projected_margin':projected_margin})
  return data
 
@@ -63,7 +68,6 @@ def _decorate_projects(rows,cid,c=None,show_financials=False):
  return out
 
 
-# Vista de Obras: empleados solo ven asignadas; crear depende del permiso granular.
 def projects_secure():
  co=company()
  if not co:return redirect('/login')
